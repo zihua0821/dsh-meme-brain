@@ -443,6 +443,86 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 角色表弹层：有哪些角色 / 梗模板、各在库里多少张、判定用的外观特征。
+     * 只读——改角色表要用 `/meme char add|rm`（命令是唯一入口，G-1）。
+     */
+    function CharsPanel({ data, onClose, onReload }) {
+      const items = data?.items || []
+      const used = items.filter((c) => c.count > 0)
+      const unused = items.filter((c) => !c.count)
+      const line = (c) => h('div', {
+        key: c.name,
+        style: { display: 'flex', gap: 8, padding: '5px 0', borderBottom: border, alignItems: 'baseline' },
+      },
+        h('span', { style: { width: 92, flex: 'none', fontSize: 13 } },
+          c.name,
+          c.kind === 'meme' ? h('span', { style: { fontSize: 10, opacity: 0.55, marginLeft: 4 } }, '梗') : null),
+        h('span', {
+          style: {
+            width: 44, flex: 'none', textAlign: 'right', fontFamily: mono, fontSize: 11,
+            opacity: c.count ? 0.85 : 0.3,
+          },
+        }, String(c.count)),
+        h('span', { style: { flex: 1, minWidth: 0, fontSize: 11, opacity: 0.72, lineHeight: '16px' } },
+          c.look || '（没有写外观特征）',
+          c.from ? h('span', { style: { opacity: 0.55 } }, ` · 出自 ${c.from}`) : null),
+      )
+
+      return h('div', {
+        style: {
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+        },
+        onClick: onClose,
+      },
+        h('div', {
+          onClick: (e) => e.stopPropagation(),
+          style: {
+            width: 560, maxWidth: '92vw', maxHeight: '80vh', overflow: 'hidden',
+            display: 'flex', flexDirection: 'column', gap: 10, padding: 16,
+            borderRadius: 12, border, background: 'Canvas', color: 'CanvasText',
+            boxShadow: '0 18px 50px rgba(0,0,0,0.35)',
+          },
+        },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('div', { style: { fontSize: 13 } },
+              `角色表 ${items.length} 条`,
+              h('span', { style: { fontSize: 11, opacity: 0.6, marginLeft: 8 } },
+                `库里用到的 ${used.length} 条 · 还没用到的 ${unused.length} 条`)),
+            h('span', { style: { flex: 1 } }),
+            h('button', {
+              type: 'button', onClick: onReload,
+              style: { padding: '4px 10px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer' },
+            }, '重新读取'),
+            h('button', {
+              type: 'button', onClick: onClose,
+              style: { padding: '4px 10px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer' },
+            }, '关闭'),
+          ),
+
+          data?.loadError
+            ? h('div', { style: { fontSize: 12, color: '#e05666' } }, `角色表读取有问题：${data.loadError}`)
+            : null,
+
+          h('div', { style: { fontSize: 11, opacity: 0.55, lineHeight: '16px' } },
+            '「外观特征」是给模型做闭集判断用的，不是简介。改角色表用命令：',
+            h('code', { style: { fontFamily: mono } }, ' /meme char add|rm '),
+            '；导入内置清单：',
+            h('code', { style: { fontFamily: mono } }, 'node scripts/import-characters.mjs')),
+
+          h('div', { style: { overflowY: 'auto', flex: 1, minHeight: 0 } },
+            h('div', { style: { fontSize: 11, opacity: 0.5, margin: '4px 0 2px' } }, '库里用到的'),
+            used.length ? used.map(line) : h('div', { style: { fontSize: 12, opacity: 0.5 } }, '（还没有认出来的角色）'),
+            unused.length
+              ? h('div', null,
+                h('div', { style: { fontSize: 11, opacity: 0.5, margin: '10px 0 2px' } }, '还没用到的（可当候选）'),
+                unused.map(line))
+              : null),
+        ),
+      )
+    }
+
     // 待办筛选项：key 对应 Host 的 todo 口径，name 是显示名
     const TODO_TABS = [
       { key: 'unanalyzed', label: '未分析' },
@@ -464,6 +544,10 @@ window.__ModuleLoader__.load({
       // 筛选状态：todo 与 character 互斥（点待办就清掉角色，反之亦然）
       const [todo, setTodo] = useState('')
       const [character, setCharacter] = useState('')
+      // 角色表弹层 + 刷新计数（refreshToken 变了就让详情重新拉）
+      const [chars, setChars] = useState(null)
+      const [showChars, setShowChars] = useState(false)
+      const [refreshToken, setRefreshToken] = useState(0)
 
       const load = useCallback(async (query, lim, todoKey, charKey) => {
         try {
@@ -484,6 +568,20 @@ window.__ModuleLoader__.load({
           setError(e.message)
         }
       }, [])
+
+      const loadChars = useCallback(async () => {
+        try {
+          setChars(await get({ op: 'chars' }))
+        } catch (e) {
+          setError(e.message)
+        }
+      }, [])
+
+      /** 刷新：列表 + 计数 + 角色表 + 当前详情，都不动筛选条件 */
+      const refreshAll = useCallback(async () => {
+        await Promise.all([load(q, limit, todo, character), loadFacets(), loadChars()])
+        setRefreshToken((n) => n + 1)
+      }, [q, limit, todo, character, load, loadFacets, loadChars])
 
       useEffect(() => { load(q, limit, todo, character) }, [q, limit, todo, character, load])
       useEffect(() => { loadFacets() }, [loadFacets])
@@ -508,6 +606,23 @@ window.__ModuleLoader__.load({
               onClick: () => { setLimit(60); setQ(draft.trim()) },
               style: { padding: '7px 12px', borderRadius: 8, border, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
             }, '搜索'),
+            h('button', {
+              type: 'button',
+              title: '重新拉列表 / 计数 / 角色表 / 当前详情（不动筛选）',
+              onClick: () => { setLimit(60); setQ(draft.trim()); refreshAll() },
+              style: { padding: '7px 12px', borderRadius: 8, border, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
+            }, '刷新'),
+            h('button', {
+              type: 'button',
+              title: '看角色表（有哪些角色、各多少张）',
+              onClick: () => { setShowChars((v) => !v); if (!chars) loadChars() },
+              style: {
+                padding: '7px 12px', borderRadius: 8, cursor: 'pointer', font: 'inherit',
+                border: showChars ? '1px solid rgba(77,107,254,0.85)' : border,
+                background: showChars ? 'rgba(77,107,254,0.16)' : 'transparent',
+                color: 'inherit',
+              },
+            }, '角色表'),
             h('span', { style: { fontSize: 12, opacity: 0.6, flex: 'none' } }, `共 ${total} 张`),
           ),
 
@@ -570,13 +685,16 @@ window.__ModuleLoader__.load({
         },
           picked
             ? h(Detail, {
-              key: picked,
+              // refreshToken 变了就连同 key 一起变，详情重新拉一次
+              key: `${picked}:${refreshToken}`,
               md5: picked,
               characters: (facets?.characters || []).map((c) => c.name),
               onSaved: () => { load(q, limit, todo, character); loadFacets() },
             })
             : h('div', { style: { fontSize: 12, opacity: 0.6, padding: '12px 0' } }, '点一张图看详情'),
         ),
+
+        showChars ? h(CharsPanel, { data: chars, onClose: () => setShowChars(false), onReload: loadChars }) : null,
       )
     }
 

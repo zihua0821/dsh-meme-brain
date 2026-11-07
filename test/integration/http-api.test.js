@@ -283,6 +283,32 @@ test('add：空请求体报 E_EMPTY_BODY', async () => {
   assert.equal(r.json.error.code, 'E_EMPTY_BODY')
 })
 
+test('chars：角色表条目 + 每张在库里的计数', async () => {
+  writeFileSync(join(tmpRoot, 'characters.json'), JSON.stringify({
+    version: 1,
+    items: {
+      大肥鱼: { kind: 'character', look: '蓝发双马尾', from: '本机人设', aka: ['鱼鱼'] },
+      简笔小人: { kind: 'meme', look: '纯黑白简笔线条人', from: '网络梗', aka: [] },
+    },
+  }), 'utf8')
+
+  const r = await call('GET', 'op=chars')
+  assert.equal(r.status, 200)
+  assert.equal(r.json.ok, true)
+  assert.equal(r.json.data.total, 2)
+
+  const fish = r.json.data.items.find((c) => c.name === '大肥鱼')
+  assert.ok(fish, '有大肥鱼这条')
+  assert.equal(fish.kind, 'character')
+  assert.equal(fish.look, '蓝发双马尾')
+  assert.deepEqual(fish.aka, ['鱼鱼'])
+  assert.equal(fish.count, 1, '库里有 1 张标成大肥鱼')
+
+  const stick = r.json.data.items.find((c) => c.name === '简笔小人')
+  assert.equal(stick.kind, 'meme', '梗模板要能区分出来')
+  assert.equal(stick.count, 0, '还没用到的是 0')
+})
+
 test('find：返回排序后的结果，字段够模块直接用', async () => {
   const r = await call('GET', `op=find&q=${encodeURIComponent('大肥鱼')}&limit=2`)
   assert.equal(r.status, 200)

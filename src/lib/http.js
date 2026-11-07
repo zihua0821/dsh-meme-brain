@@ -9,6 +9,7 @@ import { annotate } from './annotate.js'
 import { runAnalyze } from './analyze.js'
 import { search } from './search.js'
 import { ingestBuffer } from './pipeline.js'
+import * as characterTable from './characters.js'
 import { INDEX_DB, absPath } from './store.js'
 
 const ROUTE = '/meme-brain/api'
@@ -178,6 +179,23 @@ function handleGet(url, res) {
 
     if (op === 'facets') {
       return sendJson(res, 200, { ok: true, data: facets(db) })
+    }
+
+    // 角色表：表里的条目 + 每张在库里占多少（界面用来看「有哪些人、各多少张」）
+    if (op === 'chars') {
+      const counts = new Map(facets(db).characters.map((c) => [c.name, c.count]))
+      const items = characterTable.list().map((c) => ({
+        name: c.name,
+        kind: c.kind || 'character',
+        look: c.look || '',
+        from: c.from || '',
+        aka: Array.isArray(c.aka) ? c.aka : [],
+        count: counts.get(c.name) || 0,
+      }))
+      return sendJson(res, 200, {
+        ok: true,
+        data: { items, total: items.length, loadError: characterTable.lastLoadError },
+      })
     }
 
     if (op === 'find') {

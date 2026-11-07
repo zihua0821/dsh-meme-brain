@@ -170,6 +170,15 @@ const FACETS = {
   pinned: 0,
 }
 
+const CHARS = {
+  total: 2,
+  loadError: null,
+  items: [
+    { name: '大肥鱼', kind: 'character', look: '蓝发双马尾、女仆装', from: '本机人设', aka: ['鱼鱼'], count: 1 },
+    { name: '简笔小人', kind: 'meme', look: '纯黑白简笔线条人、无五官细节', from: '网络梗', aka: [], count: 0 },
+  ],
+}
+
 // 列表响应要稳定（同一份对象）：否则每次渲染都产生「新数组」，
 // 替身的 setState 会一直判定为变化，测试就停在重渲染里出不来了。
 let cachedList = null
@@ -207,6 +216,7 @@ globalThis.fetch = (url, init) => {
     return jsonResponse(analyzeResult || { item: currentItem, result: { ok: 1, failed: [], skipped: [] } })
   }
   if (u.includes('op=facets')) return jsonResponse(FACETS)
+  if (u.includes('op=chars')) return jsonResponse(CHARS)
   if (u.includes('op=item')) return jsonResponse(currentItem)
 
   listCalls += 1
@@ -374,6 +384,55 @@ async function openDetail(item) {
   cell.props.onClick()
   return settle(() => createElement(Page, {}))
 }
+
+test('刷新按钮：重新拉列表 / 计数 / 角色表（不动筛选）', async () => {
+  resetHooks()
+  currentItem = fullItem
+
+  let tree = await settle(() => createElement(Page, {}))
+  const btn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '刷新')[0]
+  assert.ok(btn, '工具栏有「刷新」')
+
+  requests.length = 0
+  btn.props.onClick()
+  await new Promise((r) => setImmediate(r))
+  tree = await settle(() => createElement(Page, {}))
+
+  const urls = requests.map((r) => r.url).join(' ')
+  assert.ok(urls.includes('op=list'), '刷新要重拉列表')
+  assert.ok(urls.includes('op=facets'), '刷新要重拉计数')
+  assert.ok(urls.includes('op=chars'), '刷新要重拉角色表')
+  assert.ok(textOf(tree).join('').includes('大肥鱼生气'), '刷新后列表还在')
+})
+
+test('角色表：点开能看到条目、外观特征、用没用过，能关掉', async () => {
+  resetHooks()
+  currentItem = fullItem
+
+  let tree = await settle(() => createElement(Page, {}))
+  const open = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '角色表')[0]
+  assert.ok(open, '工具栏有「角色表」')
+
+  open.props.onClick()
+  tree = await settle(() => createElement(Page, {}))
+  let text = textOf(tree).join('')
+
+  assert.ok(text.includes('角色表'), '弹层标题')
+  assert.ok(text.includes('大肥鱼'), '列出角色')
+  assert.ok(text.includes('简笔小人'), '列出梗模板')
+  assert.ok(text.includes('蓝发双马尾、女仆装'), '显示外观特征（判定依据）')
+  assert.ok(text.includes('纯黑白简笔线条人'), '梗模板的特征也在')
+  assert.ok(text.includes('梗'), '梗模板有标记')
+  assert.ok(text.includes('库里用到的') && text.includes('还没用到的'), '分了用过/没用过')
+  assert.ok(text.includes('本机人设'), '显示出处')
+
+  // 关掉
+  const close = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '关闭')[0]
+  assert.ok(close, '有关闭按钮')
+  close.props.onClick()
+  tree = await settle(() => createElement(Page, {}))
+  assert.ok(!textOf(tree).join('').includes('还没用到的'), '关掉后弹层消失')
+})
 
 test('筛选条：待办与角色各自带张数，点击后把筛选参数带给 Host', async () => {
   resetHooks()
