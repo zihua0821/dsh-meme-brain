@@ -89,8 +89,23 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | `meme_find` | 找图。`query` 可写整句，「生气的大肥鱼」→ 角色=大肥鱼 + 情绪=生气，按五维距离排序 |
 | `meme_status` | 总量 / 角色分布 / 待办计数 |
 
-**检索判断只有一份**：`src/lib/search.js`。工具、`/meme find` 命令、（将来的）QQ 模块都调它。
+**检索判断只有一份**：`src/lib/search.js`。工具、`/meme find` 命令、（QQ 模块的）`op=find` 都调它。
 拆解顺序：认情绪词 → 认角色（否则「大肥鱼」只当文字，27 张漏到 4 张）→ 剩余当关键词（名字/标签/**图上文字**/外观）→ 情绪距离排序，名字命中加权。
+
+### Aurabot 模块（M7-b / M8，已在跑）
+
+`integrations/aurabot/stickers/index.mjs` → 部署到 `modules/stickers/index.mjs`。
+**id 故意叫 `stickers`**：插件 core/modules.js 的 `wanted()` 规则是「同名用户模块顶掉内置模块」。
+
+- 向 hub 提供 `match / segmentFor / pickForReply / collect / library / markUsed`
+- 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`
+- 命令：`/表情 <关键词>`
+- 补录：吸收旧的 `gif-stickers`（`sub_type=11` 动图、`get_image` 换 rkey、动图判定），启动时把旧模块自动关掉
+- 发送闸门：`maxSendMB` 默认 5MB（库 269/275 可发）；`pickForReply` 只挑可发的
+- 数据全走 HTTP（`op=list` / `op=find` / `op=add` / `op=analyze` / `op=annotate`）
+
+**判重只有一份**：`src/lib/pipeline.js` 的 `ingestBuffer()`，目录导入和 `op=add` 共用。
+**回退**：`modules.stickers.useBuiltin = true`（回内置）、`modules['gif-stickers'].enabled = true`（回旧补录）、删模块文件夹（彻底）。
 
 ---
 
@@ -102,6 +117,7 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | 插件安装方式 | profile 里是 **link**：`dsh-meme-brain → F:\dsh-meme-brain` |
 | profile | `%USERPROFILE%\.dsh\profiles\desktop` |
 | 数据目录 | `%USERPROFILE%\.dsh\meme-brain\`（library/ + index.db + characters.json + backups/） |
+| **Aurabot 模块** | `%USERPROFILE%\.dsh\plugins-data\aurabot\modules\stickers\index.mjs`（**替换内置表情模块**）。仓库源码在 `integrations/aurabot/stickers/`，改完跑 `node scripts/deploy-aurabot.mjs` |
 | GUI 端口 | 每次重启会变（当前见运行时 context / `ctx.webServer.getOrigin()`） |
 | dsh CLI | `F:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
 | 依赖 | 只有 `sharp`（原生，libvips 8.18.7） |
@@ -130,8 +146,8 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | M4 | 最简界面（网格/详情/编辑）+ HTTP | ✅ 已验收 |
 | M5 | 七维分析 + 外观 + 角色注入 | ✅ 已跑全量 |
 | M6 | 角色表 + 检索 | 🔶 75%：表/命令/规范化/`--character` 检索/**人工标注 + pinned 锁定**；**缺** L3 归纳、批量标注 `bulk` |
-| M7 | AI 工具 `meme_find` + cordis 服务 `memeBrain` | 🔶 **M7-a 已完成**：`meme_find`/`meme_status` + `/meme find`，共用 `search.js`；**M7-b（接进 QQ）未开始** |
-| M8 | QQ 采集接入（中继模块）+ 判重前置 | ⬜ 未开始 |
+| M7 | AI 工具 `meme_find` + QQ 接入 | ✅ **M7-a**（`meme_find`/`meme_status` + `/meme find`）、**M7-b**（QQ 模块接管表情）都已完成 |
+| M8 | QQ 采集接入 + 判重前置 | ✅ **已并入 M7-b**：`op=add` 走 `ingestBuffer`，动图补录已兼并在新模块里；旧 `gif-stickers` 已自动关闭 |
 | M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 详情页 + M9-b 筛选条/实时标注/锁定 + M9-c 单张分析按钮已完成**；缺批量操作、导入导出 |
 
 ---
@@ -210,14 +226,12 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 2. 详情里「保存并下一张」：连续标注时省一次点击
 3. 待办视图里直接内联编辑（不点开抽屉）
 
-**M7-b 计划（待你点头，会改她的行为）**：
-QQ 里她能自己挑图 —— 写一个 Aurabot 模块（`~/.dsh/plugins-data/aurabot/modules/meme-qq/index.mjs`）：
-- `api.tool()` 挂 `meme_find`（查新库）+ `meme_send`（找到后用 `api.sendImage(chatId, 绝对路径)` 发出去）
-- `api.rule()` 告诉她有这个本事；`api.command({name:'表情'})` 给主人用
-- 数据走 HTTP（`api.dsh.get('webServer').getOrigin()` + `/meme-brain/api`），不走内存服务 —— 守住 ADR-0005
-- 验收：QQ 里说「来张生气的大肥鱼」→ 她真的发一张；说「来张耄耋睡觉的」→ 她说没有
+**M7-b 计划（待你点头，会改她的行为）**：~~已完成~~ → QQ 表情已由 `modules/stickers` 接管，见第 2 节「Aurabot 模块」。
 
-**M8 计划**：Aurabot 加中继模块（判重前置 + upload），关掉 `stickers.collect`。
+**下一步候选**：
+1. **批量标注 `bulk`**：207 张未知角色还是一张一张点
+2. **M9 导入导出**：现在只备份索引，不打包图片
+3. 观察 QQ 侧：她挑图准不准、会不会发太频、补录配额是否合适
 
 ---
 

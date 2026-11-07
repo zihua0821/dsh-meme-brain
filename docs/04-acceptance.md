@@ -713,3 +713,118 @@ git revert --no-edit <本次提交>
 ```
 
 已实测：停用插件会把两个工具一起撤掉，不会留下悬空工具。
+
+---
+
+## M7-b / M8 · 新库接管 QQ 表情（替换内置 + 兼并补录）✅
+
+**① 做什么**
+
+内置表情模块（`stickers`）用的是它自己的 `index.json` 库。这一版把它**整个换掉**：Aurabot 的模块规则是「同名用户模块顶掉内置模块」，所以我们写了一个 id 也叫 `stickers` 的模块，让聊天中枢找表情时找到新库。
+
+| 原来 | 现在 |
+|---|---|
+| 内置 `index.json` 库（289 张，无角色无分数） | `~/.dsh/meme-brain`（275 张，带角色/情绪/图上文字） |
+| 内置 `stickers` 模块 | `modules/stickers/index.mjs`（仓库里在 `integrations/aurabot/stickers/`） |
+| 旧的 `gif-stickers` 补录模块 | 逻辑并进新模块，旧模块**自动关闭** |
+| 只有 `qq_send_sticker` 等 3 个工具 | 多两个真正懂内容的：`meme_find`（找）、`meme_send`（找到就发） |
+
+新模块向聊天中枢提供它要的六个函数（少一个她就完全不会发表情）：
+
+```
+match(名字)  segmentFor(item)  pickForReply(回复文字)  collect(表情段)  library()  markUsed(md5)
+```
+
+**顺带补的两条 Host 接口**（模块靠它们工作）：
+
+```
+POST /meme-brain/api?op=add&source=qq    body = 图片原始字节
+     判重走 lib/pipeline.js 的 ingestBuffer —— 和目录导入是同一份规则
+     → { added, md5, near?, item? }     重复时 added:false 并说明原因
+GET  /meme-brain/api?op=find&q=&character=&emotion=&limit=
+```
+
+**两个设计决定**：
+
+1. **判重逻辑抽成了 `ingestBuffer()`**：QQ 补录、目录导入、以后任何入口都调它。之前目录导入自己写了一份循环，等于两份判重规则，迟早给出不同答案。
+2. **发送体积闸门 `maxSendMB`（默认 5MB）**：库里最大那张 9.7MB，base64 后 13MB，发出去会被网关拒。现在 269/275 张可发，`pickForReply` 也只从可发的里挑——**宁可少发一张，也不要她"发了个空的"**。
+
+**② 怎么验**
+
+**第一步：看她还在不在干活**（日志是这个模块唯一的心脏监护）：
+
+```powershell
+$log = "$env:USERPROFILE\.dsh\plugins-data\aurabot\logs\aurabot-$(Get-Date -Format 'yyyy-MM-dd').log"
+Get-Content $log -Tail 30 -Encoding UTF8 | Select-String '接管|已停下|重新加载'
+```
+
+预期能看到：
+
+```
+[stickers] 表情包（新库）已接管：发表情/偷表情/找图都走 ~/.dsh/meme-brain
+[modules] 模块「表情包（新库）」（自己写的）已启动
+[modules] 模块「动图表情补收」已停下          ← 兼并成功
+```
+
+**第二步：在 QQ 里让她找图**
+
+```
+你：来张生气的大肥鱼
+她：（调 meme_find 或 meme_send）→ 真的发出一张
+你：来张耄耋睡觉的
+她：说没有，而不是瞎发一张
+```
+
+**第三步：验证补录真的在收**
+
+往群里发一张**动图表情**（QQ 商店的那种），等几秒看日志：
+
+```
+[stickers] 表情入库 xxxxxxxx（234KB）
+[stickers] 起名「xxx」
+```
+
+然后在 DSH 界面「表情包」里刷新，总数应该 +1。
+
+**第四步（不经过 QQ 也能验）**
+
+```powershell
+# 同一张图发两次，第二次必须被拦住
+$f = "$env:USERPROFILE\.dsh\plugins-data\aurabot\modules\stickers\index.mjs"   # 随便一个文件当图片会报解析错，用真图更好
+curl.exe -X POST --data-binary "@<某张图.jpg>" "http://127.0.0.1:<端口>/meme-brain/api?op=add&source=test"
+```
+
+预期第一次 `"added": true`，第二次 `"added": false, "near": {"reason":"byte-identical"}`。
+
+自动检查：
+
+```
+node --test "test/**/*.test.js"
+```
+
+预期：`tests 133 / pass 133 / fail 0`，新增 11 项专门盯这个模块（导出齐不齐、找不到图不凑数、发不出去的图不硬发、旧模块只关一次、`op=find` 参数对得上）。
+
+**③ 变化**
+
+- 她的表情库和你界面里看到的是**同一个库**了——这是「库唯一」真正落地的一刻。
+- 她挑图从「按标签随机」变成「懂角色和情绪」。
+- 动图表情（QQ 标 `sub_type=11`，内置从来收不到的那些）现在会自己进库。
+- 旧库 `plugins-data/aurabot/stickers/` 不再写入，可以留着当备份。
+
+**④ 怎么退**
+
+三个层次，从轻到重：
+
+```
+# 1. 只用回内置表情模块（库还是旧的，她的行为立刻复原）
+#    面板「扩展」页把 stickers 切回内置，或改 config.json：
+#    modules.stickers.useBuiltin = true
+
+# 2. 恢复旧的补录模块
+#    面板「扩展」页打开 gif-stickers，或 modules['gif-stickers'].enabled = true
+
+# 3. 整个不要这个模块
+#    删掉 ~/.dsh/plugins-data/aurabot/modules/stickers/ 文件夹（3 秒内自动退回内置）
+```
+
+新模块只写两处：配置里的 `modules['gif-stickers'].enabled = false`（一次性），以及通过 `op=add` 往新库加图。**没有任何一步改旧库**，所以退回去时旧库原样还在。

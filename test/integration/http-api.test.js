@@ -5,7 +5,7 @@
 
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -214,6 +214,95 @@ test('非回环地址一律 403', async () => {
   const req = { ...makeReq('GET', '/meme-brain/api?op=list'), socket: { remoteAddress: '10.0.0.9' } }
   await handler(req, res)
   assert.equal(res.statusCode, 403)
+})
+
+// ---- 补录（op=add）与找图（op=find）：QQ 模块要用的两个接口 ----
+
+const fixtures = join(import.meta.dirname, '..', 'fixtures')
+const readFixture = (name) => readFileSync(join(fixtures, name))
+
+/** 用原始字节发请求（op=add 收的不是 JSON） */
+async function postBytes(query, buf) {
+  const res = {
+    statusCode: 0,
+    body: '',
+    writeHead(status) { this.statusCode = status; return this },
+    end(p) { this.body += p; return this },
+  }
+  const listeners = {}
+  const req = {
+    method: 'POST',
+    url: `/meme-brain/api?${query}`,
+    socket: { remoteAddress: '127.0.0.1' },
+    on(event, fn) {
+      listeners[event] = fn
+      if (event === 'data' && buf) fn(buf)
+      if (event === 'end') fn()
+      return this
+    },
+    destroy() {},
+  }
+  await handler(req, res)
+  return { status: res.statusCode, json: JSON.parse(res.body) }
+}
+
+test('add：新图入库，回带详情', async () => {
+  const buf = readFixture('dup-a.jpg')
+  const r = await postBytes('op=add&source=qq', buf)
+  assert.equal(r.status, 200)
+  assert.equal(r.json.data.added, true)
+  assert.equal(r.json.data.md5.length, 32)
+  assert.ok(r.json.data.item, 'added 时应带详情，补录方可以直接拿去起名')
+  assert.equal(r.json.data.item.source, 'qq')
+})
+
+test('add：字节相同的重发不进库（补录最容易撞的就是这个）', async () => {
+  const buf = readFixture('dup-a.jpg')
+  const r = await postBytes('op=add&source=qq', buf)
+  assert.equal(r.json.data.added, false)
+  assert.equal(r.json.data.near.reason, 'byte-identical')
+})
+
+test('add：近似重复（另一张压缩版）也不进库', async () => {
+  const buf = readFixture('dup-b.jpg')
+  const r = await postBytes('op=add&source=qq', buf)
+  assert.equal(r.json.data.added, false, 'dup-b 是 dup-a 的近重复，必须拦住')
+  assert.ok(r.json.data.near.max !== undefined, '要给出距离')
+})
+
+test('add：不是图片的字节报解析错误，不写库', async () => {
+  const r = await postBytes('op=add', Buffer.from('这不是图片'))
+  assert.equal(r.status, 400)
+  assert.equal(r.json.ok, false)
+  assert.match(r.json.error.code, /^E_/)
+})
+
+test('add：空请求体报 E_EMPTY_BODY', async () => {
+  const r = await postBytes('op=add', Buffer.alloc(0))
+  assert.equal(r.status, 400)
+  assert.equal(r.json.error.code, 'E_EMPTY_BODY')
+})
+
+test('find：返回排序后的结果，字段够模块直接用', async () => {
+  const r = await call('GET', `op=find&q=${encodeURIComponent('大肥鱼')}&limit=2`)
+  assert.equal(r.status, 200)
+  assert.equal(r.json.ok, true)
+  const d = r.json.data
+  assert.equal(d.used.character, '大肥鱼', '「大肥鱼」应被认成角色而不是关键词')
+  assert.ok(Array.isArray(d.items))
+  assert.ok(d.items.length <= 2)
+  for (const it of d.items) {
+    assert.equal(it.md5.length, 32)
+    assert.ok(it.path, '模块要拿 path 去发图')
+    assert.ok('name' in it && 'score' in it)
+  }
+})
+
+test('find：搜不到返回空数组而不是报错', async () => {
+  const r = await call('GET', `op=find&q=${encodeURIComponent('根本没有这个')}`)
+  assert.equal(r.status, 200)
+  assert.equal(r.json.data.total, 0)
+  assert.deepEqual(r.json.data.items, [])
 })
 
 test('analyze：单张分析真的跑了模型并落库', async () => {

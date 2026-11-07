@@ -7,6 +7,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { openDb, queryItems, findByPrefix, facets } from './db.js'
 import { annotate } from './annotate.js'
 import { runAnalyze } from './analyze.js'
+import { search } from './search.js'
+import { ingestBuffer } from './pipeline.js'
 import { INDEX_DB, absPath } from './store.js'
 
 const ROUTE = '/meme-brain/api'
@@ -49,8 +51,29 @@ function readJson(req, limit = 1024 * 1024) {
   })
 }
 
+/** 读原始字节（补录上传图片用；base64 会让 16MB 的图变成 22MB，没必要） */
+function readRaw(req, limit = 24 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks = []
+    req.on('data', (c) => {
+      size += c.length
+      if (size > limit) {
+        reject(new Error(`请求体过大（上限 ${Math.round(limit / 1048576)}MB）`))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
+}
+
 const publicItem = (r) => ({
   md5: r.md5,
+  // path 给外部程序用（QQ 模块要拿它读文件发图）；相对库根，不泄绝对路径
+  path: r.path,
   name: r.name || '',
   tags: r.tags || '',
   state: r.state,
@@ -157,6 +180,17 @@ function handleGet(url, res) {
       return sendJson(res, 200, { ok: true, data: facets(db) })
     }
 
+    if (op === 'find') {
+      const r = search(db, {
+        keyword: url.searchParams.get('q') || undefined,
+        character: url.searchParams.get('character') || undefined,
+        emotion: url.searchParams.get('emotion') || undefined,
+        scene: url.searchParams.get('scene') || undefined,
+        limit: url.searchParams.get('limit') || undefined,
+      })
+      return sendJson(res, 200, { ok: true, data: r })
+    }
+
     if (op === 'item') {
       const { row, ambiguous } = findByPrefix(db, url.searchParams.get('md5') || '')
       if (!row) return sendJson(res, 404, { ok: false, error: { code: 'E_NOT_FOUND' } })
@@ -171,6 +205,10 @@ function handleGet(url, res) {
 
 async function handlePost(url, req, res, ctx) {
   const op = url.searchParams.get('op') || ''
+
+  // op=add 收原始字节，其余收 JSON
+  if (op === 'add') return addOne(url, req, res)
+
   const body = await readJson(req)
   const db = open()
   if (!db) return sendJson(res, 409, { ok: false, error: { code: 'E_NO_INDEX' } })
@@ -207,6 +245,50 @@ async function handlePost(url, req, res, ctx) {
 
 // 正在分析的 md5：防止连点把同一张送去模型好几次（既费钱又互相覆盖结果）
 const inFlight = new Set()
+
+/**
+ * 收一张图的字节并入库（QQ 补录用）。
+ *
+ * 判重规则在 lib/pipeline.js 的 ingestBuffer 里，和目录导入共用一份：
+ * 这里绝不自己判断「像不像」。
+ */
+async function addOne(url, req, res) {
+  let buf
+  try {
+    buf = await readRaw(req)
+  } catch (error) {
+    return sendJson(res, 413, { ok: false, error: { code: 'E_TOO_LARGE', message: error.message } })
+  }
+  if (!buf || !buf.length) {
+    return sendJson(res, 400, { ok: false, error: { code: 'E_EMPTY_BODY', message: '没有收到图片字节' } })
+  }
+
+  const db = open()
+  if (!db) {
+    db?.close?.()
+    return sendJson(res, 409, { ok: false, error: { code: 'E_NO_INDEX' } })
+  }
+  try {
+    const source = url.searchParams.get('source') || 'qq'
+    const r = await ingestBuffer(db, buf, { source })
+    // added 时把刚入库的详情带回去，补录方可以直接拿去起名/打标签
+    const item = r.status === 'added' ? findByPrefix(db, r.md5).row : null
+    return sendJson(res, 200, {
+      ok: true,
+      data: {
+        added: r.status === 'added',
+        md5: r.md5,
+        near: r.near || null,
+        item: item ? detailItem(item) : null,
+      },
+    })
+  } catch (error) {
+    const code = error.code || 'E_PARSE'
+    return sendJson(res, 400, { ok: false, error: { code, message: error.message } })
+  } finally {
+    db.close?.()
+  }
+}
 
 /**
  * 分析单张。业务全部在 lib/analyze.js，这里只负责：
