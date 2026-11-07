@@ -65,6 +65,7 @@ const DEFAULTS = {
   maxSendMB: 5,           // 发送单张上限
   collectPlain: false,    // 旧口径：普通图片按尺寸猜（judgeMode=size 时才用）
   judgeMode: 'model',     // 普通图片怎么判：model=问模型 / size=按尺寸猜 / off=不收
+  charEditMode: 'owner',  // 谁能通过对话改库：owner=只有主人 / anyone=群里谁都可以 / off / 关掉
   faces: true,            // 夹 QQ 小黄脸（不是本库的功能，但面板页挪走后只有这里能改）
 }
 
@@ -100,6 +101,11 @@ export default {
       { value: 'off', label: '不收普通图片' },
     ], hint: '群里发的表情包经常就是普通图片（QQ 不标表情段），只能看图判断。选「问模型」后同图只判一次，结果缓存在 judge-cache.json' },
     { key: 'collectPlain', label: '（旧）按尺寸收普通图片', type: 'switch', hint: '只在「普通图片怎么判=按尺寸猜」时生效：近方形、边长≤600、≤512KB' },
+    { key: 'charEditMode', label: '谁能对话改库', type: 'select', options: [
+      { value: 'owner', label: '只有主人（推荐）' },
+      { value: 'anyone', label: '谁都可以（群里任何人都能改）' },
+      { value: 'off', label: '关掉（不让她改库）' },
+    ], hint: '对话里说「这张是XX角色」就能改角色表。注意：这是写库权限，默认只给主人' },
     { key: 'faces', label: '夹 QQ 小黄脸', type: 'switch', hint: '回复里能夹 /捂脸 /斜眼笑 这种系统表情。这是插件本来的功能，不属于表情库，但归到这里统一管' },
   ],
 
@@ -259,8 +265,27 @@ export default {
       }
     }
 
-    const haystack = (it) => [it.name || '', it.character || '', it.text || '', it.tags || '']
+    // ---------- 「刚才那张」与「刚才是谁」 ----------
+    // 对话里改库需要两个现场信息：这次说的是哪张图、上一个说话的人是谁。
+    // 都只在内存里记最近一次（重启就丢，可接受：这类指令都是即时发生的）。
 
+    let lastImage = new Map()   // chatId -> { md5, at }
+    let lastSender = new Map()  // chatId -> { userId, at }
+    const RECENT_WINDOW = 10 * 60_000
+
+    function noteImage(chatId, md5) {
+      if (chatId && md5) lastImage.set(chatId, { md5: String(md5), at: Date.now() })
+    }
+
+    /** 取这个聊天最近那张图（10 分钟内），没有就 null */
+    function recentImage(chatId) {
+      const hit = lastImage.get(chatId)
+      if (!hit) return null
+      if (Date.now() - hit.at > RECENT_WINDOW) return null
+      return items().find((it) => it.md5 === hit.md5) || { md5: hit.md5 }
+    }
+
+    const haystack = (it) => [it.name || '', it.character || '', it.text || '', it.tags || '']
     /** 模糊匹配（同步）：名字 10 分、角色 8 分、文字/标签 6 分 */
     function match(query) {
       const q = String(query || '').trim()
@@ -575,7 +600,7 @@ export default {
       return ratio >= 0.6 && ratio <= 1.7
     }
 
-    async function captureOne(seg) {
+    async function captureOne(seg, chatId) {
       if (!underQuota()) {
         log.debug('这一小时收得够多了（配额用完），跳过')
         return false
@@ -619,6 +644,7 @@ export default {
             }
             log.info(`模型判定是表情包（${verdict.why || '无误'}${verdict.cached ? '，缓存' : ''}）`)
             const r = await ingest(buf, 'qq')
+            noteImage(chatId, r.md5)
             if (r && !r.ok && r.reason) log.debug(`没入库：${r.reason}`)
             return Boolean(r && r.ok)
           }
@@ -634,6 +660,8 @@ export default {
       }
 
       const r = await ingest(buf, 'qq')
+      // 记下「这个聊天最近一张图是哪张」，对话里纠正角色时要用（判重命中也要记）
+      noteImage(chatId, r.md5)
       // 判重命中也是静默的「已经办好了」，但排查时要能看见，所以记一条 debug
       if (r && !r.ok && r.reason) log.debug(`没入库：${r.reason}`)
       return Boolean(r && r.ok)
@@ -684,10 +712,12 @@ export default {
       }
 
       // 存图纯粹是后台动作：不受这一轮回复影响，也不影响这一轮回复。
-      for (const seg of segs) await serialize(() => captureOne(seg))
+      for (const seg of segs) await serialize(() => captureOne(seg, msg.chatId))
     }
 
     api.on('message', (msg) => {
+      // 记现场：谁在说、这个聊天最近一张图是哪张（后面 qq_set_character 要用）
+      if (msg.chatId) lastSender.set(msg.chatId, { userId: String(msg.userId || ''), at: Date.now() })
       capture(msg).catch((error) => log.debug('收表情出错：', error.message))
       return false // 只旁观，不接管
     })
@@ -824,6 +854,58 @@ export default {
           },
         }),
         api.defineTool({
+          name: 'qq_set_character',
+          description: '主人让你改某张表情的角色（或外观/场景）时用这个。定位顺序：md5 前缀 > 名字 > 这个聊天里刚发的那张。只有主人能改。',
+          properties: {
+            character: str('角色名，比如 大肥鱼 / doro / 龙图。新名字会自动建进角色表并锁定'),
+            sticker: str('要改哪张：名字或关键词。不填就用这个聊天里最近那张图'),
+            md5: str('要改哪张：md5 前缀（最精确，可选）'),
+            appearance: str('顺便改外观描述（可选）'),
+            scene: str('顺便改场景，逗号分隔，最多 3 个（可选）'),
+          },
+          required: ['character'],
+          execute: async ({ character, sticker, md5, appearance, scene }, toolCtx) => {
+            const chatId = toolCtx?.chat?.chatId || current
+            const ownerQQ = String(api.config().ownerQQ || '')
+            const sender = String(lastSender.get(chatId)?.userId || '')
+            const mode = String(settings().charEditMode || 'owner')
+            if (mode === 'off') return { ok: false, message: '改库功能关着（参数页「谁能对话改库」）' }
+            if (mode === 'owner' && ownerQQ && sender !== ownerQQ) {
+              return { ok: false, message: '只有主人能改表情库' }
+            }
+
+            // 定位：md5 > 名字 > 这个聊天最近那张
+            let hit = null
+            if (md5) hit = items().find((it) => String(it.md5).startsWith(String(md5).toLowerCase())) || null
+            if (!hit && sticker) hit = match(String(sticker))
+            if (!hit && !sticker && !md5) hit = recentImage(chatId)
+            if (!hit) {
+              return {
+                ok: false,
+                message: sticker
+                  ? `库里没找到「${sticker}」。可以说得具体点，或者让我用刚发的那张`
+                  : '没认出你说的是哪一张。把它发出来、或者告诉我名字',
+              }
+            }
+
+            try {
+              const body = { md5: hit.md5, character: String(character) }
+              if (typeof appearance === 'string' && appearance) body.appearance = appearance
+              if (typeof scene === 'string' && scene) body.scene = scene
+              const updated = await annotateRemote(body)
+              refresh().catch(() => {})
+              log.info(`对话改库：「${hit.name || hit.md5.slice(0, 8)}」→ 角色「${updated.character || character}」`)
+              return {
+                ok: true,
+                md5: hit.md5,
+                message: `改好了：「${hit.name || hit.md5.slice(0, 8)}」现在的角色是「${updated.character || character}」`,
+              }
+            } catch (error) {
+              return { ok: false, message: `没改成：${error.message}` }
+            }
+          },
+        }),
+        api.defineTool({
           name: 'qq_collect_sticker',
           description: '悄悄把聊天里刚出现的表情收进自己的表情库（喜欢才收，不喜欢就别调）。index 从 1 开始；name 是你给它起的名字。',
           properties: {
@@ -935,7 +1017,7 @@ export default {
 
     // ---------- 让她知道 ----------
 
-    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。库里没有的就直说没有，不要编。\n存表情是顺手做的事，跟聊天是两件互不相干的事：不用提存图、不用说「存好了」、「记下了」，也不要提「库」这个字。别人发表情时，你照平时的习惯回——想说话就说话，想甩个表情就发个表情，别为了「回应他发表情」硬塞。')
+    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。库里没有的就直说没有，不要编。\n当主人明确要你"把这张设成/改成某个角色"（比如「这张是 doro 第二形态」「把这张改成蘑菇头」）时，调一次 qq_set_character：不填 sticker 就用他刚发的那张，角色名照他说的写，然后回一句改成了什么。只有明确的改库要求才动这一手——随口评价一张图不算。\n存表情是顺手做的事，跟聊天是两件互不相干的事：不用提存图、不用说「存好了」、「记下了」，也不要提「库」这个字。别人发表情时，你照平时的习惯回——想说话就说话，想甩个表情就发个表情，别为了「回应他发表情」硬塞。')
 
     api.command({
       name: '表情',

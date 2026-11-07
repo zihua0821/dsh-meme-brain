@@ -60,7 +60,15 @@ let judgeVerdict = { sticker: false, why: '截图' }
 let addVerdict = null
 globalThis.fetch = async (url, init) => {
   const u = String(url)
-  fetched.push({ url: u, method: init?.method || 'GET' })
+  let body
+  if (typeof init?.body === 'string') {
+    try {
+      body = JSON.parse(init.body)
+    } catch {
+      body = init.body
+    }
+  }
+  fetched.push({ url: u, method: init?.method || 'GET', body })
   if (u.startsWith('http://stub')) {
     // 不同 op 回不同形状，否则入库/起名这条链根本走不到
     let data
@@ -172,6 +180,83 @@ async function load(apiOver, settingOver) {
   return { mod, svc, ...ctx }
 }
 
+/** 模拟主人在这个聊天里说了句话（权限校验看的是最近发言人） */
+function ownerSpeaks(handlers, chatId = 'private:1', kind = 'private', userId = '1') {
+  handlers.message({ kind, chatId, userId, text: '这张是 doro', stickers: [], images: [] })
+}
+
+test('对话改库：主人说「这张是 doro」→ 用刚发的那张，改角色', async () => {
+  const { handlers, toolFactories } = await load({}, { caption: false })
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+
+  // 主人先发一张图（会被收进来，noteImage 记下 md5）
+  imageBytes = ANIMATED_IMAGE
+  handlers.message({ kind: 'private', chatId: 'private:1', userId: '1', stickers: [], images: [{ type: 'image', data: { file: 'i'.repeat(32) + '.gif', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 200))
+  imageBytes = FAKE_IMAGE
+
+  fetched.length = 0
+  const tool = made.find((t) => t.name === 'qq_set_character')
+  assert.ok(tool, '要有 qq_set_character 工具')
+  const r = await tool.execute({ character: 'doro' })
+
+  assert.equal(r.ok, true, r.message)
+  const ann = fetched.find((f) => f.url.includes('op=annotate'))
+  assert.ok(ann, '要调 annotate')
+  assert.equal(ann.body.character, 'doro')
+  assert.match(r.message, /doro/, '要告诉主人改成了什么')
+})
+
+test('对话改库：群里别人说同样的话 → 拒绝（权限硬闸，不靠模型自觉）', async () => {
+  const { handlers, toolFactories } = await load({}, { caption: false })
+  const made = toolFactories[0]({ chat: { chatId: 'group:1', kind: 'group' } })
+
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '999', stickers: [], images: [{ type: 'image', data: { file: 'j'.repeat(32) + '.gif', sub_type: 99 } }] })
+  await new Promise((r) => setTimeout(r, 150))
+
+  fetched.length = 0
+  const r = await made.find((t) => t.name === 'qq_set_character').execute({ character: '蘑菇头' })
+  assert.equal(r.ok, false)
+  assert.match(r.message, /只有主人/)
+  assert.ok(!fetched.some((f) => f.url.includes('op=annotate')), '不能真的写库')
+})
+
+test('对话改库：charEditMode=off 时不让她改', async () => {
+  const { toolFactories } = await load({}, { caption: false, charEditMode: 'off' })
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+  const r = await made.find((t) => t.name === 'qq_set_character').execute({ character: 'doro', md5: 'a'.repeat(8) })
+  assert.equal(r.ok, false)
+  assert.match(r.message, /关着/)
+})
+
+test('对话改库：能按名字定位，也能按 md5 前缀定位', async () => {
+  const { handlers, toolFactories } = await load({}, { caption: false })
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+  const tool = made.find((t) => t.name === 'qq_set_character')
+  ownerSpeaks(handlers) // 权限：确认是主人在说
+
+  fetched.length = 0
+  const byName = await tool.execute({ character: '大肥鱼', sticker: '开心炫饭' })
+  assert.equal(byName.ok, true, byName.message)
+  assert.equal(fetched.find((f) => f.url.includes('op=annotate')).body.md5, ITEMS[0].md5)
+
+  fetched.length = 0
+  const byMd5 = await tool.execute({ character: '龙图', md5: ITEMS[1].md5.slice(0, 8) })
+  assert.equal(byMd5.ok, true, byMd5.message)
+  assert.equal(fetched.find((f) => f.url.includes('op=annotate')).body.md5, ITEMS[1].md5)
+})
+
+test('对话改库：没图也没名字 → 让她问清楚，而不是乱改', async () => {
+  const { handlers, toolFactories } = await load({}, { caption: false })
+  const made = toolFactories[0]({ chat: { chatId: 'private:9', kind: 'private' } })
+  ownerSpeaks(handlers, 'private:9')
+  fetched.length = 0
+  const r = await made.find((t) => t.name === 'qq_set_character').execute({ character: 'doro' })
+  assert.equal(r.ok, false)
+  assert.match(r.message, /哪一张/)
+  assert.ok(!fetched.some((f) => f.url.includes('op=annotate')))
+})
+
 test('判重命中：日志里要写清撞上的是哪一张（不能只说「重复」）', async () => {
   const { handlers } = await load({}, { caption: false })
   const existing = ITEMS[0] // 开心炫饭
@@ -197,9 +282,9 @@ test('模块定义：名字和插件绑定 + 独立页（不挂内置页签）',
   assert.equal(mod.tab, undefined, '不挂内置页签，用独立页')
   const keys = (mod.settings || []).map((s) => s.key).sort()
   assert.deepEqual(keys, [
-    'autoChance', 'caption', 'collect', 'collectMode', 'collectPlain', 'enabled', 'faces',
-    'fromGroups', 'fromPrivate', 'judgeMode', 'maxMB', 'maxPerHour', 'maxSendMB',
-  ], '13 个参数：8 个必要 + 2 个上限 + judgeMode（普通图判定）+ collectPlain（旧口径）+ faces')
+    'autoChance', 'caption', 'charEditMode', 'collect', 'collectMode', 'collectPlain', 'enabled',
+    'faces', 'fromGroups', 'fromPrivate', 'judgeMode', 'maxMB', 'maxPerHour', 'maxSendMB',
+  ], '14 个参数：8 个必要 + 2 个上限 + judgeMode + charEditMode + collectPlain（旧口径）+ faces')
   // maxLibrary 已决定不做（自动删图 = 数据损失）
   assert.ok(!keys.includes('maxLibrary'))
 })

@@ -138,10 +138,11 @@ POST /meme-brain/api?op=char-rm   {name,force?}   → 有图在用时 409 E_IN_U
 
 > 踩过的坑：先用「文件名像 md5」→ 收进两张游戏截图；再用「只收动图+表情段」→ 群里普通图片段的表情包全漏；再用「按尺寸猜」→ 代理指标，边界必错。最后走模型判定（ADR-0020）。
 
-- 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
+- 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、**`qq_set_character`**、`qq_collect_sticker`、`qq_save_sticker`
+- **对话改库**（`qq_set_character`）：主人说「这张是 doro」就改角色。定位顺序 md5 前缀 > 名字 > 这个聊天最近那张图（10 分钟内）。**权限硬校验**：比对最近一条消息的发送者与 `ownerQQ`，参数 `charEditMode` = `owner`（默认）/`anyone`/`off`
 - **存图与回应是两条独立的路（原则）**：存图是后台动作，绝不改写她的回复；她想说话就说话、想甩表情就甩表情。工具结果做得极淡（只回一个「好」），规则里只要求「别提存图、别提库」。~~早期版本用 `saveSignal` 删文字强塞表情，已废弃~~
 - 命令：`/表情 <关键词>`
-- **参数在面板「系统」→ 表情脑**（模块独立页），13 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / **普通图片怎么判** / （旧）按尺寸收 / 夹小黄脸
+- **参数在面板「系统」→ 表情脑**（模块独立页），14 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / **普通图片怎么判** / **谁能对话改库** / （旧）按尺寸收 / 夹小黄脸
 - ⚠️ **进不了「表达」**：`TAB_MODS = { stickers: ['stickers'] }`，那个页签只在内置模块运行时才存在；而自定义页只能落「平台/系统」。
 - **镜像**：`config.stickers` 里 hub 还认的字段（`enabled` 恒 false、`faces`、`collect`、`collectMode`、`fromGroups`、`fromPrivate`）由模块写过去，否则 hub 的提示会和设置不同步
 - 不做：`maxLibrary`（自动删图 = 数据损失）
