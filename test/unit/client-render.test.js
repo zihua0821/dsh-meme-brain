@@ -324,12 +324,24 @@ test('详情：能看到角色、外观、场景、指向、评分与被分析�
   assert.ok(textInput, '有图上文字输入框')
   assert.equal(textInput.props.value, '滚')
 
-  // 角色下拉要含**角色表全量**，包括还没标过图的新角色（以前只取库里用到的，新角色不出现）
-  const list = findAll(tree, (n) => n.props?.id === 'memebrain-chars')[0]
-  assert.ok(list, '有角色下拉')
-  const options = list.props.children.flat().map((o) => o.props.value)
-  assert.ok(options.includes('大肥鱼'), '库里用到的角色在')
-  assert.ok(options.includes('简笔小人'), '角色表里有但 0 张的也要在')
+  // 角色下拉（自绘）：含角色表全量，包括还没标过图的新角色
+  const charInput = findAll(tree, (n) => n.type === 'input' && String(n.props?.placeholder || '').includes('可滚动'))[0]
+  assert.ok(charInput, '有角色输入框')
+  // 当前值是「大肥鱼」，先清空才能看到全量候选
+  charInput.props.onChange({ target: { value: '' } })
+  tree = await settle(() => createElement(Page, {}))
+  const charText = textOf(tree).join('|')
+  assert.ok(charText.includes('大肥鱼'), '库里用到的角色在')
+  assert.ok(charText.includes('简笔小人'), '角色表里有但 0 张的也要在')
+  assert.ok(charText.includes('（清空 = 未知）'), '有清空项')
+
+  // 点一项 → 写进输入框，下拉收起
+  const option = findAll(tree, (n) => n.props?.onMouseDown && textOf(n).join('') === '简笔小人')[0]
+  assert.ok(option, '候选可点')
+  option.props.onMouseDown({ preventDefault() {} })
+  tree = await settle(() => createElement(Page, {}))
+  const afterPick = findAll(tree, (n) => n.type === 'input' && String(n.props?.placeholder || '').includes('可滚动'))[0]
+  assert.equal(afterPick.props.value, '简笔小人', '点了就填进去')
 
   // 场景：7 个可点的标签都在
   for (const s of ['吃饭', '工作', '游戏', '摸鱼', '睡觉', '社交', '日常']) {
@@ -515,7 +527,7 @@ test('改角色：提交 character，新建角色时明确告知', async () => {
 
   let tree = await openDetail({ ...fullItem, character: '', charConf: '', pinned: false })
 
-  const input = findAll(tree, (n) => n.type === 'input' && n.props.list === 'memebrain-chars')[0]
+  const input = findAll(tree, (n) => n.type === 'input' && String(n.props?.placeholder || '').includes('可滚动'))[0]
   assert.ok(input, '详情里有角色输入框')
   input.props.onChange({ target: { value: '耄耋' } })
   tree = await settle(() => createElement(Page, {}))

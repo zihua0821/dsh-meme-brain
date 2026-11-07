@@ -309,6 +309,12 @@ window.__ModuleLoader__.load({
       }
       const label = (text) => h('label', { style: { fontSize: 12, opacity: 0.7, display: 'block', marginTop: 4 } }, text)
 
+      // 角色下拉：打开状态 / 高亮项 / 按当前输入过滤后的候选
+      const [charOpen, setCharOpen] = useState(false)
+      const [charHi, setCharHi] = useState(0)
+      const charQuery = String(draft?.character || '').trim().toLowerCase()
+      const charList = (characters || []).filter((c) => !charQuery || String(c).toLowerCase().includes(charQuery))
+
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
         h('img', {
           src: item.url, alt: item.name || item.md5,
@@ -331,15 +337,66 @@ window.__ModuleLoader__.load({
           placeholder: '卖萌,干饭',
           style: inputStyle,
         }),
-        h('label', { style: { fontSize: 12, opacity: 0.7 } }, '角色（留空 = 未知）'),
-        h('input', {
-          value: draft.character, onChange: (e) => setField('character', e.target.value),
-          list: 'memebrain-chars',
-          placeholder: '大肥鱼 / doro / 耄耋…',
-          style: inputStyle,
-        }),
-        h('datalist', { id: 'memebrain-chars' },
-          (characters || []).map((c) => h('option', { key: c, value: c }))),
+        h('label', { style: { fontSize: 12, opacity: 0.7 } },
+          '角色（留空 = 未知）',
+          h('span', { style: { opacity: 0.5, marginLeft: 6 } }, `候选 ${(characters || []).length} 条`)),
+        // 自绘下拉：原生 datalist 在 Electron 里不出滚动条、方向键也不响应，
+        // 34 条角色根本翻不完，所以自己画一个可滚的列表。
+        h('div', { style: { position: 'relative' } },
+          h('input', {
+            value: draft.character,
+            onChange: (e) => { setField('character', e.target.value); setCharOpen(true); setCharHi(0) },
+            onFocus: () => setCharOpen(true),
+            onKeyDown: (e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setCharOpen(true)
+                setCharHi((i) => Math.min(charList.length - 1, i + 1))
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setCharHi((i) => Math.max(0, i - 1))
+              } else if (e.key === 'Enter') {
+                if (charOpen && charList[charHi]) {
+                  e.preventDefault()
+                  setField('character', charList[charHi])
+                  setCharOpen(false)
+                }
+              } else if (e.key === 'Escape') {
+                setCharOpen(false)
+              }
+            },
+            placeholder: '大肥鱼 / doro / 耄耋…（可滚动，或直接输入新名字）',
+            style: inputStyle,
+          }),
+          charOpen
+            ? h('div', {
+              style: {
+                marginTop: 4, maxHeight: 216, overflowY: 'auto', border,
+                borderRadius: 6, background: 'Canvas', boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+              },
+            },
+              h('div', {
+                key: '__clear__',
+                onMouseDown: (e) => { e.preventDefault(); setField('character', ''); setCharOpen(false) },
+                style: {
+                  padding: '5px 8px', fontSize: 12, cursor: 'pointer', opacity: 0.55, borderBottom: border,
+                },
+              }, '（清空 = 未知）'),
+              charList.length
+                ? charList.map((name, i) => h('div', {
+                  key: name,
+                  onMouseDown: (e) => { e.preventDefault(); setField('character', name); setCharOpen(false) },
+                  style: {
+                    padding: '5px 8px', fontSize: 12, cursor: 'pointer',
+                    background: i === charHi ? 'rgba(77,107,254,0.16)' : 'transparent',
+                    borderBottom: i === charList.length - 1 ? 'none' : border,
+                  },
+                }, name))
+                : h('div', { style: { padding: '6px 8px', fontSize: 11, opacity: 0.55 } },
+                  '没有匹配的角色。直接输入新名字，保存时会自动建进角色表。'),
+            )
+            : null,
+        ),
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
           h('button', {
             type: 'button', onClick: save,
