@@ -10,6 +10,7 @@ import { doctor } from './lib/doctor.js'
 import { importDirectory, rebuild, repair, backfillMeta } from './lib/pipeline.js'
 import { formatList, formatDetail, formatDupes, formatTodo, formatSearch } from './lib/query.js'
 import { annotate } from './lib/annotate.js'
+import { saveCharacter, removeCharacter } from './lib/charEdit.js'
 import { search } from './lib/search.js'
 import { runAnalyze } from './lib/analyze.js'
 import * as characterTable from './lib/characters.js'
@@ -34,9 +35,10 @@ const HELP = [
   '        [--appearance=关键词] [--name=关键词] [--include-pinned]',
   '        --force 重跑已分析的图（不动名字）；--rename 才允许改写名字',
   '        人工锁定的条目默认跳过；--include-pinned 才连它一起重跑',
-  '  /meme char list                   看角色表',
-  '  /meme char add <名字> [--look=外观] [--from=出处] [--kind=character|meme]',
-  '  /meme char rm <名字>              删除角色',
+  '  /meme char list                   看角色表（带每张用了几次）',
+  '  /meme char add <名字> [--look=外观] [--from=出处] [--aka=别名1,别名2] [--kind=character|meme]',
+  '  /meme char add <新名> --rename=<旧名>   改名（库里引用旧名的图一起改并锁定）',
+  '  /meme char rm <名字> [--force]    删除（库里有图在用会拒绝，--force 一起清空）',
   '  /meme backfill <源目录> [--force]  从源库 index.json 回填名字与标签',
   '  /meme import <目录> [--dry-run]   导入目录（先判重再写入）',
   '                                    路径支持 ~ 与 %USERPROFILE% 展开',
@@ -362,37 +364,56 @@ function cmdChar(args, flags) {
   if (sub === 'list') {
     const rows = characterTable.list()
     if (!rows.length) return '角色表是空的。用 /meme char add <名字> --look=<外观特征> 添加。'
+    const counts = new Map()
+    try {
+      withIndex((db) => {
+        for (const r of db.prepare("SELECT character AS n, COUNT(*) AS c FROM items WHERE character IS NOT NULL AND character <> '' GROUP BY character").all()) {
+          counts.set(r.n, Number(r.c))
+        }
+      })
+    } catch {
+      /* 没有索引就只列名字 */
+    }
     const lines = [`角色表 ${rows.length} 条：`, '']
     for (const c of rows) {
-      lines.push(`  ${c.name}${c.kind === 'meme' ? '（梗模板）' : ''}`)
+      const used = counts.get(c.name) || 0
+      lines.push(`  ${c.name}${c.kind === 'meme' ? '（梗模板）' : ''}  ${used ? `${used} 张` : '未使用'}`)
       if (c.look) lines.push(`      外观：${c.look}`)
       if (c.from) lines.push(`      出处：${c.from}`)
+      if (c.aka?.length) lines.push(`      别名：${c.aka.join(' / ')}`)
     }
     return lines.join('\n')
   }
 
-  if (sub === 'add') {
+  if (sub === 'add' || sub === 'set') {
     const name = args[1]
-    if (!name) return fail('用法：/meme char add <名字> [--look=外观] [--from=出处] [--kind=character|meme]')
-    try {
-      const saved = characterTable.upsert({
+    if (!name) return fail('用法：/meme char add <名字> [--look=外观] [--from=出处] [--aka=别名1,别名2] [--kind=character|meme]')
+    return withIndex((db) => {
+      const r = saveCharacter(db, {
         name,
+        originalName: typeof flags.rename === 'string' ? flags.rename : undefined,
         look: typeof flags.look === 'string' ? flags.look : undefined,
         from: typeof flags.from === 'string' ? flags.from : undefined,
+        aka: typeof flags.aka === 'string' ? flags.aka : undefined,
         kind: typeof flags.kind === 'string' ? flags.kind : undefined,
-        aka: typeof flags.aka === 'string' ? flags.aka.split(/[,，]/).map((s) => s.trim()).filter(Boolean) : undefined,
       })
+      if (!r.ok) return fail(r.message || r.code)
       const total = characterTable.list().length
-      return `已${flags.look ? '保存' : '登记'}：${saved.name}（${saved.kind}）。角色表现在 ${total} 条。`
-    } catch (error) {
-      return fail(error.message)
-    }
+      const parts = [r.created ? `已新增：${r.name}` : `已保存：${r.name}`]
+      if (r.renamedFrom) parts.push(`（由「${r.renamedFrom}」改名，库里 ${r.moved} 张跟着改并锁定）`)
+      parts.push(`角色表现在 ${total} 条`)
+      return parts.join('')
+    })
   }
 
   if (sub === 'rm' || sub === 'remove') {
     const name = args[1]
-    if (!name) return fail('用法：/meme char rm <名字>')
-    return characterTable.remove(name) ? `已删除：${name}` : `没有这个角色：${name}`
+    if (!name) return fail('用法：/meme char rm <名字> [--force]（库里还有图在用时会拒绝，--force 才一起清空）')
+    return withIndex((db) => {
+      const r = removeCharacter(db, name, { force: Boolean(flags.force) })
+      if (!r.ok) return fail(r.message || r.code)
+      return `已删除：${r.name}${r.cleared ? `（同时清空了 ${r.cleared} 张图的角色）` : ''}`
+    })
   }
 
   return fail(`未知的 char 子命令：${sub}`)

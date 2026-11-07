@@ -553,12 +553,19 @@ git revert --no-edit <本次提交>
 | **刷新** | 重新拉列表 / 计数 / 角色表 / 当前详情，**不动筛选条件**（以前只能刷新页面） |
 | **角色表** | 弹层：28 条角色和梗模板、各在库里多少张、判定用的外观特征、出处；分「库里用到的 / 还没用到的」两组 |
 
-角色表**只读**：改表要用命令（G-1），弹层里也写了提示和 `import-characters.mjs` 的用法。
+角色表**可以直接在弹层里改**（不再只是只读）：
+
+- 每行可改：名字、类型（角色 / 梗模板）、外观特征、出处、别名
+- **改名会连带动库里引用它的图**（一起改，并顺手锁定，挡住 `analyze --force`）
+- **删除时如果还有图在用会拒绝**，并告诉你有几张；再点一次「确认删除」才强制清空
+- 底部可以「＋ 新增」
 
 新接口：
 
 ```
-GET /meme-brain/api?op=chars → { items: [{name,kind,look,from,aka,count}], total, loadError }
+GET  /meme-brain/api?op=chars                        → { items: [{name,kind,look,from,aka,count}], total, loadError }
+POST /meme-brain/api?op=char-save  {name, originalName?, look?, from?, aka?, kind?}
+POST /meme-brain/api?op=char-rm    {name, force?}    → 在有图在用时返回 409 E_IN_USE
 ```
 
 `count` 是把角色表和库里的实际标注数合并出来的（用来一眼看出「谁还没被用过」）。
@@ -568,15 +575,21 @@ GET /meme-brain/api?op=chars → { items: [{name,kind,look,from,aka,count}], tot
 ```
 # 插件管理器关/开一次，页面 Ctrl+R
 # 1. 点「角色表」→ 应看到 28 条，分两组；大肥鱼 27 张、龙图 23 张
-# 2. 点「关闭」→ 弹层消失
-# 3. 在命令行改点东西（比如 /meme tag ... --character=xxx）
-# 4. 点「刷新」→ 列表和计数立刻更新，筛选条件不清空
+# 2. 改某条的「外观特征」→ 点该行「保存」→ 提示「已保存」
+# 3. 把某个角色改名 → 提示「已改名，库里 N 张跟着改并锁定」
+# 4. 点「删除」一个还有图在用的角色 → 被拒绝并告诉你几张；再点「确认删除」才强制清
+# 5. 点「关闭」→ 弹层消失
+# 6. 点「刷新」→ 列表和计数立刻更新，筛选条件不清空
 ```
 
 命令行等价（不看界面也能核）：
 
 ```
-/meme char list      → 28 条
+/meme char list                          → 28 条，带「N 张 / 未使用」和别名
+/meme char add 新角色 --look=外观 --from=出处 --aka=别名1,别名2
+/meme char add 新名字 --rename=旧名字      → 改名（库里引用旧名的图一起改并锁定）
+/meme char rm 新角色                       → 有图在用时拒绝
+/meme char rm 新角色 --force                → 连引用一起清空
 ```
 
 接口直查：
@@ -585,10 +598,10 @@ GET /meme-brain/api?op=chars → { items: [{name,kind,look,from,aka,count}], tot
 curl "http://127.0.0.1:<端口>/meme-brain/api?op=chars"
 ```
 
-自动检查：`node --test "test/**/*.test.js"` → **160 pass / 0 fail**，新增 3 项：
-- `op=chars` 返回角色表 + 合并计数（梗模板 kind 正确、没有的算 0）
-- 刷新按钮同时打 list / facets / chars 三个接口
-- 角色表弹层显示外观特征、分组、出处，能关闭
+自动检查：`node --test "test/**/*.test.js"` → **170 pass / 0 fail**，新增 10 项：
+- `test/unit/charEdit.test.js`：新增/部分修改/空名拒绝/改名连带条目并锁定/重名拒绝/原名不存在拒绝/删除在用拒绝/force 才清空
+- `test/integration/http-api.test.js`：`op=chars` 的字段与计数
+- `test/unit/client-render.test.js`：刷新打三个接口、角色表可编辑（名字/外观/出处/别名都在输入框）、保存走 `char-save` 且带 `originalName`
 
 **③ 变化**
 

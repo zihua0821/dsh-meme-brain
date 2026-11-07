@@ -443,31 +443,137 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 角色表里的一行：可改名字/类型/外观/出处/别名，可改名、可删除 */
+    function CharRow({ c, onChanged }) {
+      const [d, setD] = useState({
+        name: c.name, kind: c.kind || 'character', look: c.look || '', from: c.from || '', aka: (c.aka || []).join(', '),
+      })
+      const [msg, setMsg] = useState('')
+      const [confirmDel, setConfirmDel] = useState(false)
+      const set = (k, v) => { setD((x) => ({ ...x, [k]: v })); setMsg(''); setConfirmDel(false) }
+      const dirty = d.name !== c.name || d.kind !== (c.kind || 'character') || d.look !== (c.look || '')
+        || d.from !== (c.from || '') || d.aka !== (c.aka || []).join(', ')
+
+      const save = useCallback(async () => {
+        try {
+          const r = await post({ op: 'char-save' }, {
+            originalName: c.name, name: d.name, kind: d.kind, look: d.look, from: d.from, aka: d.aka,
+          })
+          setMsg(r.renamedFrom ? `已改名，库里 ${r.moved} 张跟着改并锁定` : '已保存')
+          onChanged?.()
+        } catch (e) {
+          setMsg(e.message)
+        }
+      }, [c.name, d, onChanged])
+
+      const del = useCallback(async (force) => {
+        try {
+          const r = await post({ op: 'char-rm' }, { name: c.name, force })
+          setMsg(`已删除${r.cleared ? `（清空 ${r.cleared} 张图）` : ''}`)
+          onChanged?.()
+        } catch (e) {
+          setMsg(e.message)
+          if (/还有 \d+ 张/.test(String(e.message))) setConfirmDel(true)
+        }
+      }, [c.name, onChanged])
+
+      const inp = {
+        padding: '4px 6px', borderRadius: 5, border, background: 'transparent',
+        color: 'inherit', font: 'inherit', fontSize: 12, boxSizing: 'border-box',
+      }
+
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '7px 0', borderBottom: border } },
+        h('div', { style: { display: 'flex', gap: 6, alignItems: 'center' } },
+          h('input', { value: d.name, onChange: (e) => set('name', e.target.value), style: { ...inp, width: 96, flex: 'none' } }),
+          h('select', {
+            value: d.kind, onChange: (e) => set('kind', e.target.value),
+            style: { ...inp, width: 74, flex: 'none' },
+          },
+            h('option', { value: 'character' }, '角色'),
+            h('option', { value: 'meme' }, '梗模板')),
+          h('input', {
+            value: d.look, onChange: (e) => set('look', e.target.value),
+            placeholder: '外观特征（判定依据，写得排他一点）',
+            style: { ...inp, flex: 1, minWidth: 0 },
+          }),
+          h('span', {
+            style: { width: 44, flex: 'none', textAlign: 'right', fontFamily: mono, fontSize: 11, opacity: c.count ? 0.85 : 0.3 },
+          }, `${c.count} 张`),
+        ),
+        h('div', { style: { display: 'flex', gap: 6, alignItems: 'center' } },
+          h('input', {
+            value: d.from, onChange: (e) => set('from', e.target.value),
+            placeholder: '出处', style: { ...inp, width: 140, flex: 'none' },
+          }),
+          h('input', {
+            value: d.aka, onChange: (e) => set('aka', e.target.value),
+            placeholder: '别名（逗号分隔）', style: { ...inp, flex: 1, minWidth: 0 },
+          }),
+          h('button', {
+            type: 'button', onClick: save, disabled: !dirty,
+            style: {
+              padding: '3px 9px', borderRadius: 5, border, font: 'inherit', fontSize: 12,
+              background: dirty ? 'rgba(77,107,254,0.16)' : 'transparent',
+              opacity: dirty ? 1 : 0.4, cursor: dirty ? 'pointer' : 'default', color: 'inherit',
+            },
+          }, '保存'),
+          confirmDel
+            ? h('button', {
+              type: 'button', onClick: () => del(true),
+              style: { padding: '3px 9px', borderRadius: 5, border: '1px solid rgba(224,86,102,0.8)', background: 'rgba(224,86,102,0.14)', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer' },
+            }, '确认删除')
+            : h('button', {
+              type: 'button', onClick: () => del(false),
+              style: { padding: '3px 9px', borderRadius: 5, border, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer' },
+            }, '删除'),
+          msg ? h('span', { style: { fontSize: 11, opacity: 0.75, flex: 1, minWidth: 0 } }, msg) : null,
+        ),
+      )
+    }
+
+    /** 新建一行 */
+    function NewCharRow({ onChanged }) {
+      const [d, setD] = useState({ name: '', kind: 'character', look: '', from: '', aka: '' })
+      const [msg, setMsg] = useState('')
+      const set = (k, v) => setD((x) => ({ ...x, [k]: v }))
+      const inp = {
+        padding: '4px 6px', borderRadius: 5, border, background: 'transparent',
+        color: 'inherit', font: 'inherit', fontSize: 12, boxSizing: 'border-box',
+      }
+      const create = async () => {
+        if (!d.name.trim()) { setMsg('名字不能为空'); return }
+        try {
+          await post({ op: 'char-save' }, { name: d.name, kind: d.kind, look: d.look, from: d.from, aka: d.aka })
+          setD({ name: '', kind: 'character', look: '', from: '', aka: '' })
+          setMsg('已新增')
+          onChanged?.()
+        } catch (e) {
+          setMsg(e.message)
+        }
+      }
+      return h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', padding: '7px 0', borderBottom: border } },
+        h('input', { value: d.name, onChange: (e) => set('name', e.target.value), placeholder: '新角色名', style: { ...inp, width: 96, flex: 'none' } }),
+        h('select', { value: d.kind, onChange: (e) => set('kind', e.target.value), style: { ...inp, width: 74, flex: 'none' } },
+          h('option', { value: 'character' }, '角色'),
+          h('option', { value: 'meme' }, '梗模板')),
+        h('input', { value: d.look, onChange: (e) => set('look', e.target.value), placeholder: '外观特征', style: { ...inp, flex: 1, minWidth: 0 } }),
+        h('input', { value: d.from, onChange: (e) => set('from', e.target.value), placeholder: '出处', style: { ...inp, width: 120, flex: 'none' } }),
+        h('button', {
+          type: 'button', onClick: create,
+          style: { padding: '3px 9px', borderRadius: 5, border, background: 'rgba(77,107,254,0.16)', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer' },
+        }, '＋ 新增'),
+        msg ? h('span', { style: { fontSize: 11, opacity: 0.75 } }, msg) : null,
+      )
+    }
+
     /**
-     * 角色表弹层：有哪些角色 / 梗模板、各在库里多少张、判定用的外观特征。
-     * 只读——改角色表要用 `/meme char add|rm`（命令是唯一入口，G-1）。
+     * 角色表弹层：可看、可改、可新增、可删除。
+     * 写入全走 /meme-brain/api 的 char-save / char-rm，和命令 `/meme char add|rm` 是同一层业务。
      */
-    function CharsPanel({ data, onClose, onReload }) {
+    function CharsPanel({ data, onClose, onReload, onChanged }) {
       const items = data?.items || []
       const used = items.filter((c) => c.count > 0)
       const unused = items.filter((c) => !c.count)
-      const line = (c) => h('div', {
-        key: c.name,
-        style: { display: 'flex', gap: 8, padding: '5px 0', borderBottom: border, alignItems: 'baseline' },
-      },
-        h('span', { style: { width: 92, flex: 'none', fontSize: 13 } },
-          c.name,
-          c.kind === 'meme' ? h('span', { style: { fontSize: 10, opacity: 0.55, marginLeft: 4 } }, '梗') : null),
-        h('span', {
-          style: {
-            width: 44, flex: 'none', textAlign: 'right', fontFamily: mono, fontSize: 11,
-            opacity: c.count ? 0.85 : 0.3,
-          },
-        }, String(c.count)),
-        h('span', { style: { flex: 1, minWidth: 0, fontSize: 11, opacity: 0.72, lineHeight: '16px' } },
-          c.look || '（没有写外观特征）',
-          c.from ? h('span', { style: { opacity: 0.55 } }, ` · 出自 ${c.from}`) : null),
-      )
 
       return h('div', {
         style: {
@@ -479,8 +585,8 @@ window.__ModuleLoader__.load({
         h('div', {
           onClick: (e) => e.stopPropagation(),
           style: {
-            width: 560, maxWidth: '92vw', maxHeight: '80vh', overflow: 'hidden',
-            display: 'flex', flexDirection: 'column', gap: 10, padding: 16,
+            width: 720, maxWidth: '94vw', maxHeight: '86vh', overflow: 'hidden',
+            display: 'flex', flexDirection: 'column', gap: 8, padding: 16,
             borderRadius: 12, border, background: 'Canvas', color: 'CanvasText',
             boxShadow: '0 18px 50px rgba(0,0,0,0.35)',
           },
@@ -506,19 +612,16 @@ window.__ModuleLoader__.load({
             : null,
 
           h('div', { style: { fontSize: 11, opacity: 0.55, lineHeight: '16px' } },
-            '「外观特征」是给模型做闭集判断用的，不是简介。改角色表用命令：',
-            h('code', { style: { fontFamily: mono } }, ' /meme char add|rm '),
-            '；导入内置清单：',
-            h('code', { style: { fontFamily: mono } }, 'node scripts/import-characters.mjs')),
+            '改完点「保存」。**名字一改，库里引用它的图会一起改**（并锁定，挡住 analyze --force）。',
+            '删除时如果还有图在用，要再点一次「确认删除」。'),
 
           h('div', { style: { overflowY: 'auto', flex: 1, minHeight: 0 } },
             h('div', { style: { fontSize: 11, opacity: 0.5, margin: '4px 0 2px' } }, '库里用到的'),
-            used.length ? used.map(line) : h('div', { style: { fontSize: 12, opacity: 0.5 } }, '（还没有认出来的角色）'),
-            unused.length
-              ? h('div', null,
-                h('div', { style: { fontSize: 11, opacity: 0.5, margin: '10px 0 2px' } }, '还没用到的（可当候选）'),
-                unused.map(line))
-              : null),
+            used.length ? used.map((c) => h(CharRow, { key: c.name, c, onChanged })) : h('div', { style: { fontSize: 12, opacity: 0.5 } }, '（还没有认出来的角色）'),
+            h('div', { style: { fontSize: 11, opacity: 0.5, margin: '12px 0 2px' } }, '还没用到的（可当候选）'),
+            unused.map((c) => h(CharRow, { key: c.name, c, onChanged })),
+            h('div', { style: { fontSize: 11, opacity: 0.5, margin: '12px 0 2px' } }, '新增'),
+            h(NewCharRow, { onChanged })),
         ),
       )
     }
@@ -694,7 +797,12 @@ window.__ModuleLoader__.load({
             : h('div', { style: { fontSize: 12, opacity: 0.6, padding: '12px 0' } }, '点一张图看详情'),
         ),
 
-        showChars ? h(CharsPanel, { data: chars, onClose: () => setShowChars(false), onReload: loadChars }) : null,
+        showChars ? h(CharsPanel, {
+          data: chars,
+          onClose: () => setShowChars(false),
+          onReload: loadChars,
+          onChanged: () => { loadChars(); loadFacets(); load(q, limit, todo, character) },
+        }) : null,
       )
     }
 

@@ -10,6 +10,7 @@ import { runAnalyze } from './analyze.js'
 import { search } from './search.js'
 import { ingestBuffer } from './pipeline.js'
 import * as characterTable from './characters.js'
+import { saveCharacter, removeCharacter } from './charEdit.js'
 import { INDEX_DB, absPath } from './store.js'
 
 const ROUTE = '/meme-brain/api'
@@ -254,6 +255,28 @@ async function handlePost(url, req, res, ctx) {
         ok: true,
         data: { ...detailItem(after), createdCharacter: r.createdCharacter, cleared: r.cleared, changed: r.changed },
       })
+    }
+
+    if (op === 'char-save') {
+      const r = saveCharacter(db, {
+        name: body.name,
+        originalName: body.originalName,
+        look: body.look,
+        from: body.from,
+        aka: body.aka,
+        kind: body.kind,
+      })
+      if (!r.ok) return sendJson(res, r.code === 'E_NOT_FOUND' ? 404 : 400, { ok: false, error: { code: r.code, message: r.message } })
+      return sendJson(res, 200, { ok: true, data: r })
+    }
+
+    if (op === 'char-rm') {
+      const r = removeCharacter(db, body.name, { force: body.force === true })
+      if (!r.ok) {
+        const status = r.code === 'E_IN_USE' ? 409 : r.code === 'E_NOT_FOUND' ? 404 : 400
+        return sendJson(res, status, { ok: false, error: { code: r.code, message: r.message, count: r.count } })
+      }
+      return sendJson(res, 200, { ok: true, data: r })
     }
 
     if (op === 'analyze') {

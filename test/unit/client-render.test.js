@@ -405,7 +405,7 @@ test('刷新按钮：重新拉列表 / 计数 / 角色表（不动筛选）', as
   assert.ok(textOf(tree).join('').includes('大肥鱼生气'), '刷新后列表还在')
 })
 
-test('角色表：点开能看到条目、外观特征、用没用过，能关掉', async () => {
+test('角色表：可看可改（名字/特征在输入框里），能新增，能关掉', async () => {
   resetHooks()
   currentItem = fullItem
 
@@ -415,23 +415,61 @@ test('角色表：点开能看到条目、外观特征、用没用过，能关�
 
   open.props.onClick()
   tree = await settle(() => createElement(Page, {}))
-  let text = textOf(tree).join('')
+  const text = textOf(tree).join('')
 
   assert.ok(text.includes('角色表'), '弹层标题')
-  assert.ok(text.includes('大肥鱼'), '列出角色')
-  assert.ok(text.includes('简笔小人'), '列出梗模板')
-  assert.ok(text.includes('蓝发双马尾、女仆装'), '显示外观特征（判定依据）')
-  assert.ok(text.includes('纯黑白简笔线条人'), '梗模板的特征也在')
-  assert.ok(text.includes('梗'), '梗模板有标记')
   assert.ok(text.includes('库里用到的') && text.includes('还没用到的'), '分了用过/没用过')
-  assert.ok(text.includes('本机人设'), '显示出处')
+  assert.ok(text.includes('新增'), '有新增区')
+  assert.ok(text.includes('删除'), '每行有删除')
+
+  // 名字 / 外观 / 出处 / 别名都在输入框里（可编辑）
+  const nameInput = findAll(tree, (n) => n.type === 'input' && n.props?.value === '大肥鱼')[0]
+  assert.ok(nameInput, '角色名在可编辑输入框里')
+  const lookInput = findAll(tree, (n) => n.type === 'input' && String(n.props?.value || '').includes('蓝发双马尾'))[0]
+  assert.ok(lookInput, '外观特征也可编辑')
+  const fromInput = findAll(tree, (n) => n.type === 'input' && n.props?.value === '本机人设')[0]
+  assert.ok(fromInput, '出处可编辑')
+  const akaInput = findAll(tree, (n) => n.type === 'input' && n.props?.value === '鱼鱼')[0]
+  assert.ok(akaInput, '别名可编辑')
+
+  // 梗模板的 kind 是 select 里的 meme
+  const kindSelects = findAll(tree, (n) => n.type === 'select' && n.props?.value === 'meme')
+  assert.ok(kindSelects.length >= 1, '梗模板的 kind 是 meme')
+  const chineseSelects = findAll(tree, (n) => n.type === 'select' && n.props?.value === 'character')
+  assert.ok(chineseSelects.length >= 1, '普通角色 kind 是 character')
 
   // 关掉
   const close = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '关闭')[0]
   assert.ok(close, '有关闭按钮')
   close.props.onClick()
+  const after = await settle(() => createElement(Page, {}))
+  assert.ok(!textOf(after).join('').includes('还没用到的'), '关掉后弹层消失')
+})
+
+test('角色表：改外观 → 保存会 POST char-save，带上 originalName', async () => {
+  resetHooks()
+  currentItem = fullItem
+
+  let tree = await settle(() => createElement(Page, {}))
+  findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '角色表')[0].props.onClick()
   tree = await settle(() => createElement(Page, {}))
-  assert.ok(!textOf(tree).join('').includes('还没用到的'), '关掉后弹层消失')
+
+  const lookInput = findAll(tree, (n) => n.type === 'input' && String(n.props?.value || '').includes('蓝发双马尾'))[0]
+  assert.ok(lookInput, '找到外观输入框')
+  lookInput.props.onChange({ target: { value: '改过的外观特征' } })
+  tree = await settle(() => createElement(Page, {}))
+
+  requests.length = 0
+  const saveBtn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '保存')[0]
+  assert.ok(saveBtn, '有保存按钮')
+  assert.ok(!saveBtn.props.disabled, '改了就能保存')
+  saveBtn.props.onClick()
+  await new Promise((r) => setImmediate(r))
+
+  const postReq = requests.find((r) => r.method === 'POST' && r.url.includes('op=char-save'))
+  assert.ok(postReq, '打的是 char-save')
+  assert.equal(postReq.body.originalName, '大肥鱼', '要带原名（改名/防重名靠它）')
+  assert.equal(postReq.body.look, '改过的外观特征')
 })
 
 test('筛选条：待办与角色各自带张数，点击后把筛选参数带给 Host', async () => {
