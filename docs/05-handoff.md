@@ -48,17 +48,23 @@ git status                        → clean @ 69cb089（+ 本次交接文档修�
 
 ### 界面
 
-DSH 侧栏「表情包」图标 → 主区：网格 + 搜索 + 详情抽屉（可改名字/标签）。
+DSH 侧栏「表情包」图标 → 主区：网格 + 搜索 + 详情抽屉。
+- 网格：每格图 + 名字 + 角色名
+- 详情抽屉（M9-a 之后）：名字/标签可改 + **分析结果**（角色/把握/外观/场景/指向/图上文字）+ **评分**（五维条形）+ **文件与来源**（md5/指纹/状态/重复/来源/入库/分析模型与时间）
+- 未分析的图给出可复制的 `/meme analyze --md5=xxxxxxxx`
+
 数据全部来自 `GET/POST /meme-brain/api`（仅 127.0.0.1）。
 
 ### HTTP API
 
 ```
 GET  /meme-brain/api?op=list&limit=&offset=&q=&state=&sort=
-GET  /meme-brain/api?op=item&md5=<前缀>
+GET  /meme-brain/api?op=item&md5=<前缀>          → 全部分析字段（detailItem）
 GET  /meme-brain/api?op=image&md5=<前缀>        → 二进制
 POST /meme-brain/api?op=annotate  {md5,name?,tags?}
 ```
+
+`op=item` 的字段装配在 `src/lib/http.js` 的 `detailItem()` / `parseScore()`，有 7 项单测盯着；界面渲染有 3 项「无浏览器冒烟测试」（`test/unit/client-render.test.js`）。
 
 ---
 
@@ -100,7 +106,7 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?}
 | M6 | 角色表 + 检索 | 🔶 做了 70%：表/命令/规范化/`--character` 检索；**缺** L3 归纳、批量标注、pinned |
 | M7 | AI 工具 `meme_find` + cordis 服务 `memeBrain` | ⬜ 未开始 |
 | M8 | QQ 采集接入（中继模块）+ 判重前置 | ⬜ 未开始 |
-| M9 | 完整界面 + 导入导出 + 完整 HTTP | ⬜ 未开始 |
+| M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 已完成**（详情页显示全部分析结果）；缺批量操作、待办视图、导入导出 |
 
 ---
 

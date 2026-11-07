@@ -29,14 +29,14 @@
 |---|---|---|---|
 | M0 | 插件装上、命令能跑 | ✅ 已验收 | `/meme doctor` |
 | M1 | 能读懂图片、判断重复 | ✅ 已完成（待你复核） | `npm test` / `scripts/scan-library.mjs` |
-| M2 | 有了库和索引 | ✅ 代码完成，**待你验收** | `/meme import`、`/meme doctor` |
-| M3 | 管理命令集 | 未开始 | `/meme list` 等 |
-| M4 | 最简界面 | 未开始 | 侧栏图标 |
-| M5 | 七维分析 | 未开始 | `/meme analyze` |
-| M6 | 角色与检索 | 未开始 | `/meme char`、`/meme list --character` |
+| M2 | 有了库和索引 | ✅ 已验收 | `/meme doctor`、`scripts/verify.mjs` |
+| M3 | 管理命令集 | ✅ 已验收 | `/meme list` / `show` / `dupes` / `todo` |
+| M4 | 最简界面 | ✅ 已验收 | 侧栏「表情包」 |
+| M5 | 七维分析 | ✅ 已验收（271 张已分析） | `/meme analyze` |
+| M6 | 角色与检索 | 🔶 70%：表 / 命令 / `--character` 检索可用；缺 L3 归纳、`bulk`、`pinned` | `/meme char list`、`/meme list --character=大肥鱼` |
 | M7 | AI 工具 | 未开始 | 在 QQ 里问她 |
 | M8 | 采集接入 | 未开始 | 群里发表情 |
-| M9 | 完整界面与导入导出 | 未开始 | `/meme export` |
+| M9 | 完整界面与导入导出 | 🔶 **M9-a 详情页已完成**；缺批量操作、待办视图、导入导出 | 点一张图看详情 |
 
 ---
 
@@ -353,3 +353,76 @@ node scripts\scan-library.mjs "$env:USERPROFILE\.dsh\plugins-data\aurabot\sticke
 
 **③ 变化**：数据可迁移。
 **④ 回退**：导入前会自动备份索引。
+
+---
+
+## M9-a · 详情页看全分析结果 ✅
+
+**① 做什么**
+
+原来详情抽屉只显示「名字 / 标签 / md5 / 文件 / 指纹 / 状态 / 来源」，模型分析出来的东西全在库里但界面上看不见。这一版把它补齐：
+
+- **Host**：`GET /meme-brain/api?op=item` 一次性返回全部分析字段（角色、把握度、外观、场景、指向、图上文字、五维分数、分析时间与模型、是否带透明、重复信息）。
+- **界面**：详情抽屉分成三块 —— **分析结果** / **评分**（五个维度做成条形，情绪是 -1~1 的双向条）/ **文件与来源**。网格里每张图下面多一行角色名。
+- **未分析的图**：不再显示空评分，而是给出可直接复制的 `/meme analyze --md5=<前8位>`。
+
+**② 怎么验**
+
+```
+# 1. 让 Host 重新加载新代码（插件管理器里关一次再开一次 include:meme-brain）
+# 2. 刷新页面 Ctrl+R
+# 3. 侧栏「表情包」→ 点任意一张图 → 右侧抽屉应看到三块分区
+```
+
+预期：点开一张「大肥鱼」的图，抽屉里能看到
+
+```
+分析结果
+  角色    大肥鱼  [把握 高]
+  外观    蓝色长发、鲸鱼尾、深蓝女仆裙、蓝蝴蝶结
+  场景    [日常] [社交]
+  指向    对方
+  图上文字 —
+评分
+  情绪  ▬▬▬▬────
+  ...
+文件与来源
+  ...
+  分析    11-07 16:23 · deepseek-flash
+```
+
+不用打开界面也能验数据层（这条是给「界面坏了也能查」用的）：
+
+```
+# 在 PowerShell 里
+$r = Invoke-WebRequest 'http://127.0.0.1:<端口>/meme-brain/api?op=item&md5=<前8位>' -UseBasicParsing
+($r.Content | ConvertFrom-Json).data | Select-Object character, charConf, appearance, scene, target, score, model
+```
+
+预期：`character` / `appearance` / `score` 都有值，与 `/meme show <前8位>` 的输出一致。
+
+自动检查（不需要界面）：
+
+```
+node --test "test/**/*.test.js"
+```
+
+预期：`tests 63 / pass 63 / fail 0`，其中
+- `test/unit/http-detail.test.js`（7 项）盯住接口字段不被改坏
+- `test/unit/client-render.test.js`（3 项）用极简 React 替身把界面渲染一遍，断言详情里真的出现角色、外观、五个评分维度
+
+**③ 变化**
+
+- 你能在界面里**看懂模型对每张图的判断**，不用再回来敲 `/meme show`。
+- 角色线索（外观 + 把握度）直接可读 —— 判断「这张到底是不是同一只猫」有了依据。
+- 界面仍是**只读 + 改名字/标签**，不能触发分析，也不能筛选角色。
+
+**④ 怎么退**
+
+```
+cd F:\dsh-meme-brain
+git revert --no-edit <本次提交>
+# 然后插件管理器关/开一次 + 页面 Ctrl+R
+```
+
+只想退界面、不退接口也可以：把 `client.js` 单独还原（退回旧版 `git checkout <上个提交> -- client.js`）。接口多返回的字段对旧界面无害，旧界面只是不显示。

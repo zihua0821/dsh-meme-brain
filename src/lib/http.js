@@ -62,6 +62,45 @@ const publicItem = (r) => ({
   url: `${ROUTE}?op=image&md5=${r.md5}`,
 })
 
+/** score 列存的是 JSON 字符串；解析失败一律当作「没有分数」，不抛错 */
+export function parseScore(raw) {
+  if (!raw) return null
+  if (typeof raw === 'object') return Array.isArray(raw) ? null : raw
+  try {
+    const v = JSON.parse(String(raw))
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 详情视图：列表字段 + 全部分析结果。
+ * 界面上「看到详细分析」全靠这里把列名翻成界面字段；界面自己不拼业务字段。
+ */
+export function detailItem(r) {
+  return {
+    ...publicItem(r),
+    charConf: r.char_conf || '',
+    appearance: r.appearance || '',
+    text: r.text || '',
+    target: r.target || '',
+    scene: r.scene || '',
+    score: parseScore(r.score),
+    analyzedAt: r.analyzed_at || null,
+    model: r.model || '',
+    dhash: r.dhash || '',
+    hasAlpha: Boolean(r.has_alpha),
+    pinned: Boolean(r.pinned),
+    source: r.source || '',
+    path: r.path,
+    dupOf: r.dup_of || '',
+    dupDistance: r.dup_distance ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
 /** 打开索引；不存在时返回 null（只读请求不应创建空库） */
 function open(readOnly) {
   if (!existsSync(INDEX_DB)) return null
@@ -113,18 +152,7 @@ function handleGet(url, res) {
     if (op === 'item') {
       const { row, ambiguous } = findByPrefix(db, url.searchParams.get('md5') || '')
       if (!row) return sendJson(res, 404, { ok: false, error: { code: 'E_NOT_FOUND' } })
-      return sendJson(res, 200, {
-        ok: true,
-        data: {
-          ...publicItem(row),
-          dhash: row.dhash,
-          source: row.source || '',
-          path: row.path,
-          createdAt: row.created_at,
-          pinned: Boolean(row.pinned),
-          ambiguous,
-        },
-      })
+      return sendJson(res, 200, { ok: true, data: { ...detailItem(row), ambiguous } })
     }
 
     return sendJson(res, 400, { ok: false, error: { code: 'E_BAD_OP', message: `未知 op：${op}` } })
