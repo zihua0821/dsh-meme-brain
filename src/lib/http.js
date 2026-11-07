@@ -180,7 +180,19 @@ function handleGet(url, res) {
     }
 
     if (op === 'facets') {
-      return sendJson(res, 200, { ok: true, data: facets(db) })
+      const f = facets(db)
+      // 角色候选要含**角色表全量**：库里还没用到的（count=0）也带上，
+      // 否则界面的角色下拉只显示「已经标过图」的那几个，新加的角色永远不出现。
+      // 顺序：用过的按张数降序，没用到的按名字排后面。
+      const used = new Map(f.characters.map((c) => [c.name, c.count]))
+      const merged = characterTable.list()
+        .map((c) => ({ name: c.name, count: used.get(c.name) || 0 }))
+        .sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name, 'zh'))
+      // 兜底：库里出现过、但表里没有的名字也要保留（历史脏数据不能让筛选消失）
+      for (const c of f.characters) {
+        if (!merged.some((m) => m.name === c.name)) merged.push(c)
+      }
+      return sendJson(res, 200, { ok: true, data: { ...f, characters: merged } })
     }
 
     // 角色表：表里的条目 + 每张在库里占多少（界面用来看「有哪些人、各多少张」）

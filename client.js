@@ -747,7 +747,7 @@ window.__ModuleLoader__.load({
                 onClick: () => pickTodo(t.key),
               }, t.label)),
               h('span', { style: { width: 1, height: 16, background: 'rgba(128,128,128,0.3)', margin: '0 4px' } }),
-              facets.characters.map((c) => h(FilterChip, {
+              facets.characters.filter((c) => c.count > 0).map((c) => h(FilterChip, {
                 key: c.name,
                 active: character === c.name,
                 count: c.count,
