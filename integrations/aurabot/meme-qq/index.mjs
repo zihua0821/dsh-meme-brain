@@ -311,24 +311,41 @@ export default {
       return bestScore >= 1.5 ? best : null
     }
 
-    /** 自动配表情用：只从发得出去的里挑，回复里提到的词优先 */
+    /**
+     * 自动配表情用：只从发得出去的里挑。
+     * 优先级：**回复里点名的角色** → 提到的情绪/标签词 → 随机兜底。
+     * 角色必须排在最前：「来只耄耋」这种点名，随机挑一张就是错的。
+     */
     function pickForReply(text) {
       const all = items()
       if (!all.length) return null
       const usable = all.filter((it) => sendablePath(it))
       const list = usable.length ? usable : all
       const t = String(text || '')
+      if (!t.trim()) return { item: list[Math.floor(Math.random() * list.length)], why: '随机' }
+
+      // 1) 角色名：长的优先（「大肥鱼」别被「鱼」抢先），且必须在文本里出现
+      const names = [...new Set(list.map((it) => it.character).filter(Boolean))]
+        .sort((a, b) => b.length - a.length)
+      for (const name of names) {
+        if (!t.includes(name)) continue
+        const same = list.filter((it) => it.character === name)
+        if (same.length) return { item: same[Math.floor(Math.random() * same.length)], why: `角色=${name}` }
+      }
+
+      // 2) 情绪/标签词
       const words = new Set(['开心', '卖萌', '生气', '委屈', '无语', '嘲讽', '疑惑'])
       for (const it of list) {
         for (const w of String(it.tags || '').split(/[,，]/)) if (w) words.add(w.trim())
       }
       for (const w of words) {
-        if (w && t.includes(w)) {
-          const m = match(w)
-          if (m && sendablePath(m)) return m
-        }
+        if (!w || !t.includes(w)) continue
+        const m = match(w)
+        if (m && sendablePath(m)) return { item: m, why: `标签=${w}` }
       }
-      return list[Math.floor(Math.random() * list.length)]
+
+      // 3) 兜底：随机
+      return { item: list[Math.floor(Math.random() * list.length)], why: '随机' }
     }
 
     // ---------- 回复改写：接住内置模块停用后的三条路 ----------
@@ -388,11 +405,13 @@ export default {
         const hasPic = out.some((it) => it && (it.kind === 'image' || it.kind === 'sticker'))
         const tooMany = inGroup && out.length >= 2
         if (!hasPic && !tooMany && Math.random() < chance) {
-          const pick = pickForReply(textOf(out))
-          const abs = pick ? sendablePath(pick) : ''
+          const picked = pickForReply(textOf(out))
+          const abs = picked && picked.item ? sendablePath(picked.item) : ''
           if (abs) {
             out.push({ kind: 'image', value: abs })
             touched = true
+            // 记下「为什么是这张」：随机配图出错时全靠这行排查
+            log.info(`自动配了一张「${picked.item.name || picked.item.md5.slice(0, 8)}」（依据：${picked.why}）`)
           }
         }
       }
@@ -1017,7 +1036,7 @@ export default {
 
     // ---------- 让她知道 ----------
 
-    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。库里没有的就直说没有，不要编。\n当主人明确要你"把这张设成/改成某个角色"（比如「这张是 doro 第二形态」「把这张改成蘑菇头」）时，调一次 qq_set_character：不填 sticker 就用他刚发的那张，角色名照他说的写，然后回一句改成了什么。只有明确的改库要求才动这一手——随口评价一张图不算。\n存表情是顺手做的事，跟聊天是两件互不相干的事：不用提存图、不用说「存好了」、「记下了」，也不要提「库」这个字。别人发表情时，你照平时的习惯回——想说话就说话，想甩个表情就发个表情，别为了「回应他发表情」硬塞。')
+    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。**别人点名要某个角色（「来只耄耋」「发张大肥鱼」）时，必须用 meme_send 把角色名传给 query，不要只回一句话等自动配图——自动配图是随机的，会发错。**库里没有的就直说没有，不要编。\n当主人明确要你"把这张设成/改成某个角色"（比如「这张是 doro 第二形态」「把这张改成蘑菇头」）时，调一次 qq_set_character：不填 sticker 就用他刚发的那张，角色名照他说的写，然后回一句改成了什么。只有明确的改库要求才动这一手——随口评价一张图不算。\n存表情是顺手做的事，跟聊天是两件互不相干的事：不用提存图、不用说「存好了」、「记下了」，也不要提「库」这个字。别人发表情时，你照平时的习惯回——想说话就说话，想甩个表情就发个表情，别为了「回应他发表情」硬塞。')
 
     api.command({
       name: '表情',

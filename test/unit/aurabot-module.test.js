@@ -257,6 +257,28 @@ test('对话改库：没图也没名字 → 让她问清楚，而不是乱改', 
   assert.ok(!fetched.some((f) => f.url.includes('op=annotate')))
 })
 
+test('自动配图：回复里点名角色时，必须配那个角色的图（不能随机）', async () => {
+  const { handlers } = await load({}, { caption: false, autoChance: 1 })
+  // 假库里有「大肥鱼」那张（其它两张：一张太大发不出、一张文件丢了）
+  const out = handlers['reply/items']([{ kind: 'text', value: '来张大肥鱼' }], { chatId: 'group:1' })
+  assert.ok(Array.isArray(out), '应该配了一张')
+  const img = out.find((i) => i.kind === 'image')
+  assert.ok(img, '有图')
+  assert.ok(img.value.includes('a'.repeat(32)), `应该发大肥鱼那张，实际发了 ${img.value}`)
+  const line = logLines.find((l) => l.text.startsWith('自动配了一张'))
+  assert.ok(line, '要记下为什么是这张')
+  assert.match(line.text, /角色=大肥鱼/, '依据应写角色')
+})
+
+test('自动配图：没点名时兜底随机，并标明「依据：随机」', async () => {
+  const { handlers } = await load({}, { caption: false, autoChance: 1 })
+  const out = handlers['reply/items']([{ kind: 'text', value: '嗯嗯' }], { chatId: 'group:1' })
+  assert.ok(Array.isArray(out))
+  const line = logLines.find((l) => l.text.startsWith('自动配了一张'))
+  assert.ok(line, '记下依据')
+  assert.match(line.text, /依据：随机/)
+})
+
 test('判重命中：日志里要写清撞上的是哪一张（不能只说「重复」）', async () => {
   const { handlers } = await load({}, { caption: false })
   const existing = ITEMS[0] // 开心炫饭
