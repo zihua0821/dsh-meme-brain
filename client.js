@@ -53,6 +53,10 @@ window.__ModuleLoader__.load({
       { key: 'absurdity', label: '抽象', min: 0, max: 1 },
     ]
 
+    // 和 Host 的 src/lib/analyze.js 保持一致（改那边要同步这里）
+    const SCENES = ['吃饭', '工作', '游戏', '摸鱼', '睡觉', '社交', '日常']
+    const TARGETS = ['自己', '对方', '第三方', '无']
+
     const CONF_COLOR = {
       高: 'rgba(70,170,110,0.9)',
       中: 'rgba(210,160,60,0.9)',
@@ -61,12 +65,6 @@ window.__ModuleLoader__.load({
     }
 
     const stamp = (ts) => (ts ? new Date(ts).toISOString().slice(5, 16).replace('T', ' ') : '—')
-
-    function Chip({ children }) {
-      return h('span', {
-        style: { padding: '1px 7px', borderRadius: 999, border, fontSize: 11, lineHeight: '16px', display: 'inline-block' },
-      }, children)
-    }
 
     /** 筛选按钮：显示名字 + 张数，选中时高亮 */
     function FilterChip({ active, count, onClick, children }) {
@@ -95,22 +93,35 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function Meter({ dim, value }) {
+    /** 评分条：有 onChange 时可拖（详情里都传），没有就是只读 */
+    function Meter({ dim, value, onChange }) {
       const has = typeof value === 'number' && Number.isFinite(value)
-      const pct = has ? Math.min(100, Math.max(0, ((value - dim.min) / (dim.max - dim.min)) * 100)) : 0
+      const current = has ? value : dim.min
+      const pct = Math.min(100, Math.max(0, ((current - dim.min) / (dim.max - dim.min)) * 100))
       const zero = dim.center ? 50 : 0
       return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, lineHeight: '18px' } },
         h('span', { style: { width: 32, opacity: 0.6, flex: 'none' } }, dim.label),
         h('div', {
-          style: { position: 'relative', flex: 1, height: 6, borderRadius: 3, background: 'rgba(128,128,128,0.22)', overflow: 'hidden' },
+          style: { position: 'relative', flex: 1, height: 16, display: 'flex', alignItems: 'center' },
         },
           h('div', {
-            style: {
-              position: 'absolute', top: 0, bottom: 0, borderRadius: 3,
-              left: `${Math.min(zero, pct)}%`, width: `${Math.abs(pct - zero)}%`,
-              background: has ? 'rgba(77,107,254,0.85)' : 'transparent',
-            },
-          }),
+            style: { position: 'absolute', left: 0, right: 0, height: 6, borderRadius: 3, background: 'rgba(128,128,128,0.22)', overflow: 'hidden' },
+          },
+            h('div', {
+              style: {
+                position: 'absolute', top: 0, bottom: 0, borderRadius: 3,
+                left: `${Math.min(zero, pct)}%`, width: `${Math.abs(pct - zero)}%`,
+                background: has ? 'rgba(77,107,254,0.85)' : 'transparent',
+              },
+            }),
+          ),
+          onChange
+            ? h('input', {
+              type: 'range', min: dim.min, max: dim.max, step: 0.05, value: current,
+              onChange: (e) => onChange(Number(e.target.value)),
+              style: { position: 'relative', width: '100%', margin: 0, background: 'transparent', accentColor: 'rgba(77,107,254,0.9)', cursor: 'pointer' },
+            })
+            : null,
         ),
         h('span', {
           style: { width: 36, textAlign: 'right', fontFamily: mono, fontSize: 11, flex: 'none', opacity: has ? 0.85 : 0.35 },
@@ -167,53 +178,96 @@ window.__ModuleLoader__.load({
 
     function Detail({ md5, onSaved, characters }) {
       const [item, setItem] = useState(null)
-      const [name, setName] = useState('')
-      const [tags, setTags] = useState('')
-      const [char, setChar] = useState('')
+      // 所有可编辑字段放一个草稿里：改哪个保存就提交哪个（见 buildPatch）
+      const [draft, setDraft] = useState(null)
       const [msg, setMsg] = useState('')
+
+      const fromItem = (d) => ({
+        name: d.name || '',
+        tags: d.tags || '',
+        character: d.character || '',
+        appearance: d.appearance || '',
+        text: d.text || '',
+        scene: String(d.scene || '').split(',').map((s) => s.trim()).filter(Boolean),
+        target: d.target || '无',
+        score: { ...(d.score || {}) },
+      })
 
       useEffect(() => {
         let alive = true
         setItem(null)
+        setDraft(null)
         setMsg('')
         get({ op: 'item', md5 })
           .then((d) => {
             if (!alive) return
             setItem(d)
-            setName(d.name || '')
-            setTags(d.tags || '')
-            setChar(d.character || '')
+            setDraft(fromItem(d))
           })
           .catch((e) => alive && setMsg(e.message))
         return () => { alive = false }
       }, [md5])
 
+      const setField = (key, value) => setDraft((d) => (d ? { ...d, [key]: value } : d))
+      const toggleScene = (s) => setDraft((d) => {
+        if (!d) return d
+        const has = d.scene.includes(s)
+        const next = has ? d.scene.filter((x) => x !== s) : [...d.scene, s].slice(0, 3)
+        return { ...d, scene: next }
+      })
+      const setScore = (key, value) => setDraft((d) => (d ? { ...d, score: { ...d.score, [key]: value } } : d))
+
+      /** 只提交真的改过的字段：否则每次点保存都会把条目锁上 */
+      const buildPatch = () => {
+        if (!item || !draft) return {}
+        const p = {}
+        if (draft.name !== (item.name || '')) p.name = draft.name
+        if (draft.tags !== (item.tags || '')) p.tags = draft.tags
+        if (draft.character !== (item.character || '')) p.character = draft.character
+        if (draft.appearance !== (item.appearance || '')) p.appearance = draft.appearance
+        if (draft.text !== (item.text || '')) p.text = draft.text
+
+        const oldScene = String(item.scene || '').split(',').map((s) => s.trim()).filter(Boolean)
+        if (draft.scene.join(',') !== oldScene.join(',')) p.scene = draft.scene.join(',')
+
+        if ((draft.target || '无') !== (item.target || '')) p.target = draft.target
+
+        const scorePatch = {}
+        for (const dim of SCORE_DIMS) {
+          const v = draft.score?.[dim.key]
+          if (typeof v === 'number' && v !== item.score?.[dim.key]) scorePatch[dim.key] = v
+        }
+        if (Object.keys(scorePatch).length) p.score = scorePatch
+        return p
+      }
+
       const save = useCallback(async () => {
         try {
-          const body = { md5, name, tags }
-          // 只在真的改过角色时才提交它：提交 character 会连带触发「人工锁定」，
-          // 只改名字却顺手把条目的模型判断锁死，是不该发生的副作用。
-          if (char !== (item?.character || '')) body.character = char
-          const updated = await post({ op: 'annotate' }, body)
+          const patch = buildPatch()
+          if (!Object.keys(patch).length) {
+            setMsg('没有改动')
+            return
+          }
+          const updated = await post({ op: 'annotate' }, { md5, ...patch })
           setItem(updated)
-          setName(updated.name || '')
-          setTags(updated.tags || '')
-          setChar(updated.character || '')
+          setDraft(fromItem(updated))
+          const changed = (updated.changed || []).join('、')
           setMsg(updated.createdCharacter
-            ? `已保存，角色表新增了「${updated.character}」`
+            ? `已保存（${changed}），角色表新增了「${updated.character}」`
             : updated.cleared
               ? '已保存，角色已交还给模型（同时解锁）'
-              : '已保存')
+              : `已保存：${changed}`)
           onSaved?.()
         } catch (e) {
           setMsg(e.message)
         }
-      }, [md5, name, tags, char, item, onSaved])
+      }, [md5, draft, item, onSaved])
 
       const unlock = useCallback(async () => {
         try {
           const updated = await post({ op: 'annotate' }, { md5, pin: false })
           setItem(updated)
+          setDraft(fromItem(updated))
           setMsg('已解除锁定，下次 analyze 会重新判断这张')
           onSaved?.()
         } catch (e) {
@@ -229,9 +283,7 @@ window.__ModuleLoader__.load({
         try {
           const data = await post({ op: 'analyze' }, { md5 })
           setItem(data.item)
-          // 名字和角色可能被模型更新过，输入框跟着刷新
-          setName(data.item.name || '')
-          setChar(data.item.character || '')
+          setDraft(fromItem(data.item))
           const r = data.result || {}
           if (r.skipped?.length) setMsg(`没分析：${r.skipped[0].message}`)
           else if (r.failed?.length) setMsg(`分析失败：${r.failed[0].message}`)
@@ -245,15 +297,17 @@ window.__ModuleLoader__.load({
       }, [md5, onSaved])
 
       if (msg && !item) return h('div', { style: { padding: 12, fontSize: 12, opacity: 0.7 } }, msg)
-      if (!item) return h('div', { style: { padding: 12, fontSize: 12, opacity: 0.7 } }, '载入中…')
+      if (!item || !draft) return h('div', { style: { padding: 12, fontSize: 12, opacity: 0.7 } }, '载入中…')
 
       const row = (k, v, w = 56) => h('div', { style: { display: 'flex', gap: 8, fontSize: 12, lineHeight: '20px' } },
         h('span', { style: { width: w, opacity: 0.6, flex: 'none' } }, k),
         h('span', { style: { wordBreak: 'break-all', flex: 1, minWidth: 0 } }, v))
 
-      const score = item.score || {}
-      const scenes = String(item.scene || '').split(',').map((s) => s.trim()).filter(Boolean)
-      const chars = String(item.character || '')
+      const inputStyle = {
+        padding: '6px 8px', borderRadius: 6, border, background: 'transparent',
+        color: 'inherit', font: 'inherit', width: '100%', boxSizing: 'border-box',
+      }
+      const label = (text) => h('label', { style: { fontSize: 12, opacity: 0.7, display: 'block', marginTop: 4 } }, text)
 
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
         h('img', {
@@ -267,22 +321,22 @@ window.__ModuleLoader__.load({
 
         h('label', { style: { fontSize: 12, opacity: 0.7 } }, '名字'),
         h('input', {
-          value: name, onChange: (e) => setName(e.target.value),
+          value: draft.name, onChange: (e) => setField('name', e.target.value),
           placeholder: '给她看的短名',
-          style: { padding: '6px 8px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit' },
+          style: inputStyle,
         }),
         h('label', { style: { fontSize: 12, opacity: 0.7 } }, '标签（逗号分隔）'),
         h('input', {
-          value: tags, onChange: (e) => setTags(e.target.value),
+          value: draft.tags, onChange: (e) => setField('tags', e.target.value),
           placeholder: '卖萌,干饭',
-          style: { padding: '6px 8px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit' },
+          style: inputStyle,
         }),
         h('label', { style: { fontSize: 12, opacity: 0.7 } }, '角色（留空 = 未知）'),
         h('input', {
-          value: char, onChange: (e) => setChar(e.target.value),
+          value: draft.character, onChange: (e) => setField('character', e.target.value),
           list: 'memebrain-chars',
           placeholder: '大肥鱼 / doro / 耄耋…',
-          style: { padding: '6px 8px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit' },
+          style: inputStyle,
         }),
         h('datalist', { id: 'memebrain-chars' },
           (characters || []).map((c) => h('option', { key: c, value: c }))),
@@ -320,31 +374,60 @@ window.__ModuleLoader__.load({
         ),
         msg ? h('div', { style: { fontSize: 12, opacity: 0.7 } }, msg) : null,
 
-        Section({ title: '分析结果',
+        Section({ title: '分析结果（都能改）',
           children: [
-            row('角色', chars
-              ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
-                chars,
-                h('span', {
-                  style: {
-                    fontSize: 10, lineHeight: '15px', padding: '0 5px', borderRadius: 999,
-                    border: `1px solid ${CONF_COLOR[item.charConf] || 'rgba(128,128,128,0.5)'}`,
-                    color: CONF_COLOR[item.charConf] || 'inherit', opacity: item.charConf ? 1 : 0.5,
-                  },
-                }, `把握 ${item.charConf || '?'}`))
-              : h('span', { style: { opacity: 0.45 } }, '未知')),
-            row('外观', item.appearance || h('span', { style: { opacity: 0.45 } }, '—')),
-            row('场景', scenes.length
-              ? h('span', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } }, scenes.map((s, i) => h(Chip, { key: i }, s)))
-              : h('span', { style: { opacity: 0.45 } }, '—')),
-            row('指向', item.target || h('span', { style: { opacity: 0.45 } }, '—')),
-            row('图上文字', item.text || h('span', { style: { opacity: 0.45 } }, '—')),
+            row('角色', h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+              draft.character || h('span', { style: { opacity: 0.45 } }, '未知'),
+              h('span', {
+                style: {
+                  fontSize: 10, lineHeight: '15px', padding: '0 5px', borderRadius: 999,
+                  border: `1px solid ${CONF_COLOR[item.charConf] || 'rgba(128,128,128,0.5)'}`,
+                  color: CONF_COLOR[item.charConf] || 'inherit', opacity: item.charConf ? 1 : 0.5,
+                },
+              }, `把握 ${item.charConf || '?'}`))),
+            label('外观（看得见的特征）'),
+            h('input', {
+              value: draft.appearance, onChange: (e) => setField('appearance', e.target.value),
+              placeholder: '蓝发双马尾、女仆装…（留空或写「无」= 清掉）',
+              style: inputStyle,
+            }),
+            label('图上文字'),
+            h('input', {
+              value: draft.text, onChange: (e) => setField('text', e.target.value),
+              placeholder: '图上真实出现的字（没有就留空）',
+              style: inputStyle,
+            }),
+            label('场景（最多 3 个，点一下切换）'),
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+              SCENES.map((s) => h('button', {
+                key: s, type: 'button', onClick: () => toggleScene(s),
+                style: {
+                  padding: '2px 9px', borderRadius: 999, cursor: 'pointer', font: 'inherit', fontSize: 12,
+                  border: draft.scene.includes(s) ? '1px solid rgba(77,107,254,0.85)' : border,
+                  background: draft.scene.includes(s) ? 'rgba(77,107,254,0.16)' : 'transparent',
+                  color: 'inherit',
+                },
+              }, s))),
+            label('指向'),
+            h('select', {
+              value: draft.target || '无', onChange: (e) => setField('target', e.target.value),
+              style: inputStyle,
+            }, TARGETS.map((t) => h('option', { key: t, value: t }, t))),
           ] }),
 
-        item.analyzed
-          ? Section({ title: '评分', children: SCORE_DIMS.map((d) => h(Meter, { key: d.key, dim: d, value: score[d.key] })) })
-          : h('div', { style: { fontSize: 12, opacity: 0.6, padding: '6px 0', lineHeight: '18px' } },
-            '还没分析过。会话里运行：', h('code', { style: { fontFamily: mono, fontSize: 11 } }, ` /meme analyze --md5=${item.md5.slice(0, 8)}`)),
+        Section({ title: '评分（拖动即可改）', children: [
+          ...SCORE_DIMS.map((dim) => h(Meter, {
+            key: dim.key,
+            dim,
+            value: draft.score?.[dim.key],
+            onChange: (v) => setScore(dim.key, v),
+          })),
+          item.analyzed
+            ? null
+            : h('div', { style: { fontSize: 11, opacity: 0.55, marginTop: 4, lineHeight: '16px' } },
+              '还没分析过（也可以直接拖）。要模型先看一遍：',
+              h('code', { style: { fontFamily: mono } }, ` /meme analyze --md5=${item.md5.slice(0, 8)}`)),
+        ] }),
 
         Section({ title: '文件与来源',
           children: [

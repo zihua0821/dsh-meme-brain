@@ -275,6 +275,15 @@ test('装载 client.js：注册了侧栏图标与主面板', async () => {
   Page = registered['main:memebrain']
 })
 
+/** 按 placeholder 片段找输入框（详情里的外观/文字都是受控 input） */
+function inputBy(tree, hint) {
+  return findAll(tree, (n) => (n.type === 'input' || n.type === 'textarea') && String(n.props?.placeholder || '').includes(hint))[0]
+}
+/** 按 option 值找 select */
+function selectByValue(tree, value) {
+  return findAll(tree, (n) => n.type === 'select' && n.props?.value === value)[0]
+}
+
 test('详情：能看到角色、外观、场景、指向、评分与被分析元信息', async () => {
   resetHooks()
   currentItem = fullItem
@@ -296,10 +305,23 @@ test('详情：能看到角色、外观、场景、指向、评分与被分析�
   assert.ok(text.includes('分析结果'), '有「分析结果」分区')
   assert.ok(text.includes('大肥鱼'), '显示角色名')
   assert.ok(text.includes('把握 高'), '显示角色把握度')
-  assert.ok(text.includes('蓝色长发'), '显示外观描述')
-  assert.ok(text.includes('社交') && text.includes('日常'), '场景拆成两个标签')
-  assert.ok(text.includes('对方'), '显示指向')
-  assert.ok(text.includes('滚'), '显示图上文字')
+
+  // 外观 / 图上文字：现在是可编辑输入框，看 value
+  const appearance = inputBy(tree, '留空或写')
+  assert.ok(appearance, '有外观输入框')
+  assert.equal(appearance.props.value, '蓝色长发、鲸鱼尾、深蓝女仆裙、蓝蝴蝶结', '外观进输入框可改')
+  const textInput = inputBy(tree, '图上真实出现的字')
+  assert.ok(textInput, '有图上文字输入框')
+  assert.equal(textInput.props.value, '滚')
+
+  // 场景：7 个可点的标签都在
+  for (const s of ['吃饭', '工作', '游戏', '摸鱼', '睡觉', '社交', '日常']) {
+    const btn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === s)[0]
+    assert.ok(btn, `场景「${s}」是可点的`)
+  }
+
+  // 指向：下拉框选中了对方
+  assert.ok(selectByValue(tree, '对方'), '指向下拉选中「对方」')
 
   assert.ok(text.includes('评分'), '有「评分」分区')
   for (const label of ['情绪', '强度', '攻击', '亲密', '抽象']) {
@@ -307,6 +329,8 @@ test('详情：能看到角色、外观、场景、指向、评分与被分析�
   }
   assert.ok(text.includes('-0.60'), '负分带符号且两位小数')
   assert.ok(text.includes('0.80'), '正分两位小数')
+  const sliders = findAll(tree, (n) => n.type === 'input' && n.props?.type === 'range')
+  assert.equal(sliders.length, 5, '五个维度都是可拖的滑块')
 
   assert.ok(text.includes('文件与来源'), '有「文件与来源」分区')
   assert.ok(text.includes('deepseek-flash'), '显示分析模型')
@@ -314,7 +338,7 @@ test('详情：能看到角色、外观、场景、指向、评分与被分析�
   assert.ok(text.includes('带透明'), '带 alpha 时标注')
 })
 
-test('详情：未分析的条目给出可执行的下一步，而不是空白', async () => {
+test('详情：未分析的条目也能直接改分数，并给出可执行的下一步', async () => {
   resetHooks()
   currentItem = {
     ...fullItem,
@@ -330,7 +354,8 @@ test('详情：未分析的条目给出可执行的下一步，而不是空白',
   const text = textOf(tree).join('')
   assert.ok(text.includes('还没分析过'), '提示未分析')
   assert.ok(text.includes('/meme analyze --md5='), '给出可直接复制的命令')
-  assert.ok(!text.includes('评分'), '没有分数时不渲染评分分区')
+  const sliders = findAll(tree, (n) => n.type === 'input' && n.props?.type === 'range')
+  assert.equal(sliders.length, 5, '没分数也能拖（五个滑块都在）')
 })
 
 /** 筛选按钮 = 文字 + 末尾张数，例如「未知角色0」 */
@@ -461,7 +486,8 @@ test('单张分析按钮：未分析的叫「分析这张」，点了真的发�
 
   text = textOf(tree).join('')
   assert.ok(text.includes('分析完成'), '有完成提示')
-  assert.ok(text.includes('模型新写的外观'), '结果直接刷新到界面上')
+  const appearanceInput = inputBy(tree, '留空或写')
+  assert.equal(appearanceInput.props.value, '模型新写的外观', '结果直接刷新到输入框里')
   assert.ok(text.includes('0.90'), '分数立刻可见')
   assert.ok(text.includes('重新分析'), '分析过之后按钮变成「重新分析」')
 })

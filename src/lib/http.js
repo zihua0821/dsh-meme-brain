@@ -220,6 +220,11 @@ async function handlePost(url, req, res, ctx) {
         name: body.name,
         tags: body.tags,
         character: body.character,
+        appearance: body.appearance,
+        text: body.text,
+        scene: body.scene,
+        target: body.target,
+        score: body.score,
         pin: body.pin,
       })
       if (!r.ok) {
@@ -229,7 +234,7 @@ async function handlePost(url, req, res, ctx) {
       const after = findByPrefix(db, r.md5).row
       return sendJson(res, 200, {
         ok: true,
-        data: { ...detailItem(after), createdCharacter: r.createdCharacter, cleared: r.cleared },
+        data: { ...detailItem(after), createdCharacter: r.createdCharacter, cleared: r.cleared, changed: r.changed },
       })
     }
 

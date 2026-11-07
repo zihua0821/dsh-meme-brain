@@ -27,8 +27,8 @@ const HELP = [
   '        按「人话」找图：情绪会转成五维分数排序，和 AI 工具用的是同一套判断',
   '  /meme dupes                       查看重复簇',
   '  /meme todo                        看待办（未分析 / 未命名 / 疑似重复）',
-  '  /meme tag <md5前缀> [--name=] [--tags=] [--character=] [--unpin]',
-  '        人工标注；填新角色会自动建进角色表；改角色会上锁',
+  '  /meme tag <md5前缀> [--name= --tags= --character= --appearance= --text= --scene= --target= --score= --unpin]',
+  '        人工标注任何字段；改模型字段（角色/外观/文字/场景/指向/分数）会自动上锁',
   '  /meme rm <md5前缀> [--yes]       删除（文件移到 trash/，不加 --yes 只预览）',
   '  /meme analyze [--limit=10] [--force] [--rename] [--md5=前缀] [--batch=4]',
   '        [--appearance=关键词] [--name=关键词] [--include-pinned]',
@@ -265,17 +265,31 @@ function cmdList(flags) {
 /** 人工标注：界面能改的，命令必须也能改（G-1） */
 function cmdTag(args, flags) {
   const md5 = args[0]
-  if (!md5) return fail('用法：/meme tag <md5前缀> [--name=] [--tags=] [--character=] [--unpin]')
+  if (!md5) {
+    return fail([
+      '用法：/meme tag <md5前缀> [选项]',
+      '  --name=短名 --tags=甲,乙 --character=角色',
+      '  --appearance=外观 --text=图上文字 --scene=吃饭,日常 --target=自己|对方|第三方|无',
+      '  --score=valence:0.5,arousal:0.3   （只改给了的维度）',
+      '  --unpin 解锁',
+      '注：改角色/外观/文字/场景/指向/分数会自动上锁，挡住 analyze --force',
+    ].join('\n'))
+  }
   return withIndex((db) => {
     const r = annotate(db, {
       md5,
       name: typeof flags.name === 'string' ? flags.name : undefined,
       tags: typeof flags.tags === 'string' ? flags.tags : undefined,
       character: typeof flags.character === 'string' ? flags.character : undefined,
+      appearance: typeof flags.appearance === 'string' ? flags.appearance : undefined,
+      text: typeof flags.text === 'string' ? flags.text : undefined,
+      scene: typeof flags.scene === 'string' ? flags.scene : undefined,
+      target: typeof flags.target === 'string' ? flags.target : undefined,
+      score: typeof flags.score === 'string' ? flags.score : undefined,
       pin: flags.unpin ? false : undefined,
     })
     if (!r.ok) return fail(r.message || r.code)
-    const lines = [`已保存 ${r.md5.slice(0, 8)}`]
+    const lines = [`已保存 ${r.md5.slice(0, 8)}（改了 ${(r.changed || []).join('、') || '锁定状态'}）`]
     if (r.createdCharacter) lines.push('（角色表里原来没有，已新建一条，出处记为 ui）')
     if (r.cleared) lines.push('（角色已清空，交还给模型，同时解锁）')
     return ok(lines.join('\n'))

@@ -166,3 +166,85 @@ test('名字与标签会被裁剪（换行、超长）', () => {
   assert.equal(row.name, '第一行 第二行')
   assert.equal(row.tags.length, annotateLib.MAX_TAGS)
 })
+
+// ---- 分析结果与评分也能人工改 ----
+
+test('改外观 / 图上文字 / 场景 / 指向：都写进去，并且上锁', () => {
+  const index = openIndex()
+  const md5 = '6'.repeat(32)
+  seed(index, md5, { pinned: 0, analyzedAt: Date.now() })
+
+  const r = annotateLib.annotate(index, {
+    md5,
+    appearance: '蓝发双马尾、女仆装（手改）',
+    text: '无所谓 反正我不要脸',
+    scene: '吃饭,日常,乱写的场景',
+    target: '对方',
+  })
+  assert.equal(r.ok, true)
+
+  const row = db.getItem(index, md5)
+  assert.equal(row.appearance, '蓝发双马尾、女仆装（手改）')
+  assert.equal(row.text, '无所谓 反正我不要脸')
+  assert.equal(row.scene, '吃饭,日常', '只认规定的场景，非法值被丢掉')
+  assert.equal(row.target, '对方')
+  assert.equal(row.pinned, 1, '改模型字段必须上锁，挡住 --force')
+})
+
+test('外观写「无」等于清空；指向非法就不改', () => {
+  const index = openIndex()
+  const md5 = '7'.repeat(32)
+  seed(index, md5, { appearance: '原来有', target: '自己', pinned: 0 })
+
+  annotateLib.annotate(index, { md5, appearance: '无' })
+  let row = db.getItem(index, md5)
+  assert.equal(row.appearance, null, '「无」= 清空，而不是存一个「无」字')
+
+  annotateLib.annotate(index, { md5, target: '外星人' })
+  row = db.getItem(index, md5)
+  assert.equal(row.target, '自己', '非法指向不改')
+})
+
+test('改分数：只动给了的维度，其余保留；越界会夹回范围', () => {
+  const index = openIndex()
+  const md5 = '8'.repeat(32)
+  seed(index, md5, {
+    pinned: 0,
+    score: JSON.stringify({ valence: 0.1, arousal: 0.2, aggression: 0.3, intimacy: 0.4, absurdity: 0.5 }),
+  })
+
+  const r = annotateLib.annotate(index, { md5, score: { valence: -3, arousal: 9 } })
+  assert.equal(r.ok, true)
+  const score = JSON.parse(db.getItem(index, md5).score)
+  assert.equal(score.valence, -1, 'valence 夹到 -1')
+  assert.equal(score.arousal, 1, 'arousal 夹到 1')
+  assert.equal(score.aggression, 0.3, '没给的维度保留原值')
+  assert.equal(score.absurdity, 0.5)
+})
+
+test('分数也接受命令里的字符串写法', () => {
+  const { values, invalid } = annotateLib.resolveScore('valence:0.5,arousal:0.25,乱写:1')
+  assert.deepEqual(values, { valence: 0.5, arousal: 0.25 })
+  assert.deepEqual(invalid, ['乱写'])
+})
+
+test('只改名字/标签时仍然不上锁（不误锁模型判断）', () => {
+  const index = openIndex()
+  const md5 = '9'.repeat(32)
+  seed(index, md5, { name: '旧', pinned: 0, appearance: '模型写的外观' })
+
+  const r = annotateLib.annotate(index, { md5, name: '新名字', tags: '甲,乙' })
+  assert.equal(r.ok, true)
+  assert.deepEqual((r.changed || []).sort(), ['name', 'tags'])
+  const row = db.getItem(index, md5)
+  assert.equal(row.pinned, 0, '只改人工字段不该上锁')
+  assert.equal(row.appearance, '模型写的外观', '没提交外观就别动它')
+})
+
+test('reset：pin:false 能解锁', () => {
+  const index = openIndex()
+  const md5 = 'a'.repeat(31) + '1'
+  seed(index, md5, { pinned: 1 })
+  annotateLib.annotate(index, { md5, pin: false })
+  assert.equal(db.getItem(index, md5).pinned, 0)
+})

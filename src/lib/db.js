@@ -101,8 +101,9 @@ export function insertItem(db, item) {
   const res = db.prepare(`
     INSERT INTO items (md5, path, ext, bytes, width, height, frames, has_alpha, dhash,
                        name, tags, state, text, character, char_conf, score, scene,
-                       analyzed_at, model, source, dup_of, dup_distance, pinned, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       analyzed_at, model, source, dup_of, dup_distance, pinned, created_at, updated_at,
+                       target, appearance)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(md5) DO NOTHING
   `).run(
     item.md5, item.path, item.ext, item.bytes, item.width ?? null, item.height ?? null,
@@ -112,6 +113,7 @@ export function insertItem(db, item) {
     item.score ?? null, item.scene ?? null,
     item.analyzedAt ?? null, item.model ?? null, item.source ?? null,
     item.dupOf ?? null, item.dupDistance ?? null, item.pinned ? 1 : 0, t, t,
+    item.target ?? null, item.appearance ?? null,
   )
   return Number(res.changes) > 0
 }
