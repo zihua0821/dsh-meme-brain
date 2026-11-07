@@ -255,6 +255,58 @@ test('收表情：普通表情也收（内置停用后 hub 不再代劳）', asy
   assert.ok(fetched.some((f) => f.url.includes('op=add')), '应该去打 op=add')
 })
 
+test('存表情：库里已有这张时，给了名字就应用到已有那张（不是白说一句）', async () => {
+  const { toolFactories, handlers } = await load({}, { caption: false })
+  // 让 op=add 回「重复」，并让 op=list 里有一张同 md5 的已存在条目
+  const realItems = ITEMS.slice()
+  const dupMd5 = realItems[0].md5
+  const fetchReal = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    const u = String(url)
+    if (u.includes('op=add')) {
+      fetched.push({ url: u })
+      return { ok: true, status: 200, json: async () => ({ ok: true, data: { added: false, md5: dupMd5, near: { reason: 'byte-identical' } } }) }
+    }
+    if (u.includes('op=annotate')) {
+      fetched.push({ url: u, body: init?.body ? JSON.parse(init.body) : null })
+      return { ok: true, status: 200, json: async () => ({ ok: true, data: { md5: dupMd5, name: '猫猫捂嘴' } }) }
+    }
+    return fetchReal(url, init)
+  }
+
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+  const tool = made.find((t) => t.name === 'qq_save_sticker')
+  const r = await tool.execute({ name: '猫猫捂嘴' })
+  globalThis.fetch = fetchReal
+
+  assert.equal(r.ok, true, '给了名字就该当成成功（名字应用上去了）')
+  assert.match(r.message, /本来就有这张/)
+  assert.match(r.message, /猫猫捂嘴/)
+  const ann = fetched.find((f) => f.url.includes('op=annotate'))
+  assert.ok(ann, '应该调用改名接口')
+  assert.equal(ann.body.name, '猫猫捂嘴')
+})
+
+test('存表情：重复且没给名字时，回「已经有这张了」并带上已有名字', async () => {
+  const { toolFactories } = await load({}, { caption: false })
+  const fetchReal = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    const u = String(url)
+    if (u.includes('op=add')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, data: { added: false, md5: ITEMS[0].md5, near: { reason: 'byte-identical' } } }) }
+    }
+    return fetchReal(url, init)
+  }
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+  const tool = made.find((t) => t.name === 'qq_save_sticker')
+  const r = await tool.execute({})
+  globalThis.fetch = fetchReal
+
+  assert.equal(r.ok, false)
+  assert.match(r.message, /库里已经有这张了/)
+  assert.match(r.message, /开心炫饭/, '要说出已有那张的名字，她才答得清楚')
+})
+
 test('find 走 op=find，参数名和 Host 对得上', async () => {
   const { svc } = await load()
   fetched.length = 0

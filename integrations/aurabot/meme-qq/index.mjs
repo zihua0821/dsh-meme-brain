@@ -440,7 +440,8 @@ export default {
     async function addFromBuffer(buf, opts = {}) {
       const { name = '', tags = [], from = 'manual' } = opts
       const r = await ingest(buf, from)
-      if (!r.ok) return { ok: false, reason: r.reason, existed: /已经有了|重复/.test(String(r.reason || '')) }
+      // 重复时把 md5 带回去：上层要拿它查出「已经在库里那张」叫什么
+      if (!r.ok) return { ok: false, md5: r.md5, reason: r.reason, existed: /已经有了|重复/.test(String(r.reason || '')) }
       if (name || (Array.isArray(tags) && tags.length)) {
         try {
           await annotateRemote({ md5: r.md5, name: name || undefined, tags: Array.isArray(tags) && tags.length ? tags.join(',') : undefined })
@@ -465,7 +466,12 @@ export default {
       }
     }
 
-    /** 下载一个段再入库（工具用） */
+    /**
+     * 下载一个段再入库（工具用）。返回的 message 是给她的原话。
+     *
+     * 判重撞车时不只是回「已经有了」：如果她/主人顺口给了名字或标签，
+     * 就把名字应用到**已有那张**上（"存一下这张，叫猫猫捂嘴" 应该生效，而不是白说一句）。
+     */
     async function collectSeg(seg, opts = {}) {
       let buf
       try {
@@ -473,9 +479,31 @@ export default {
       } catch (error) {
         return { ok: false, message: '下载失败：' + error.message }
       }
-      const r = await addFromBuffer(buf, { name: opts.name || '', tags: opts.tags || [], from: opts.from || 'tool' })
-      if (!r.ok) return { ok: false, message: r.existed ? '库里已经有这张了' : (r.reason || '没存成') }
-      return { ok: true, md5: r.item.md5 }
+
+      const name = String(opts.name || '').trim().slice(0, 12)
+      const tags = Array.isArray(opts.tags) ? opts.tags.filter(Boolean).slice(0, 3) : []
+      const r = await addFromBuffer(buf, { name, tags, from: opts.from || 'tool' })
+
+      if (r.ok) return { ok: true, md5: r.md5, message: `收进库了${name ? `「${name}」` : ''}` }
+      if (!r.existed) return { ok: false, message: r.reason || '没存成' }
+
+      const hit = r.md5 ? items().find((it) => it.md5 === r.md5) : null
+      const shown = hit && hit.name ? `「${hit.name}」` : ''
+
+      if (name || tags.length) {
+        try {
+          await annotateRemote({
+            md5: r.md5,
+            ...(name ? { name } : {}),
+            ...(tags.length ? { tags: tags.join(',') } : {}),
+          })
+          refresh().catch(() => {})
+          return { ok: true, md5: r.md5, message: `库里本来就有这张${shown}，${name ? `名字改成「${name}」了` : '标签更新了'}` }
+        } catch (error) {
+          log.debug('重复时改名失败：', error.message)
+        }
+      }
+      return { ok: false, md5: r.md5, message: `库里已经有这张了${shown}` }
     }
 
     let capturing = Promise.resolve()
@@ -677,8 +705,7 @@ export default {
             const seg = hub.stickerOf(current, Number(index) || 1)
             if (!seg) return { ok: false, message: '这张表情已经拿不到了（超过 30 分钟，或者这一轮里没有这张）' }
             const r = await collectSeg(seg, { name: String(name || '').slice(0, 12), tags: Array.isArray(tags) ? tags.slice(0, 3) : [], from: current })
-            if (!r.ok) return r
-            return { ok: true, message: `收进库了：「${name || r.md5.slice(0, 8)}」` }
+            return r
           },
         }),
         api.defineTool({
@@ -693,8 +720,7 @@ export default {
             const last = [...recentMedia].reverse().find((x) => x && x.seg)
             if (!last) return { ok: false, message: '这个聊天里最近没有可以存的图' }
             const r = await collectSeg(last.seg, { name: String(name || '').slice(0, 12), tags: Array.isArray(tags) ? tags.slice(0, 3) : [], from: 'owner' })
-            if (!r.ok) return r
-            return { ok: true, message: `存好了「${name || r.md5.slice(0, 8)}」` }
+            return r
           },
         }),
       ]
