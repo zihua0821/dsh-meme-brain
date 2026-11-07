@@ -42,12 +42,18 @@ src/
 ├── lib/
 │   ├── parse.js      魔数识别、解码、尺寸/帧/透明/文字
 │   ├── dhash.js      9×8 灰度 + 三帧 dHash + 汉明距离
-│   ├── store.js      library/ 读写、md5 命名、软删除
-│   ├── index.js      SQLite：schema、迁移、查询
+│   ├── store.js      library/ 读写、md5 命名、软删除、trash/
+│   ├── db.js         SQLite：schema、迁移、查询、facets
 │   ├── dedupe.js     候选检索与判定
-│   ├── analyze.js    角色识别 + 多维评分 + OCR 编排
+│   ├── analyze.js    角色识别 + 多维评分 + 标签 + OCR 编排
 │   ├── characters.js 角色表读写与闭集提示词
-│   ├── pipeline.js   编排：接入→解析→判重→入库→分析
+│   ├── charEdit.js   角色表的写操作：改/改名/删（改名连带动条目）
+│   ├── annotate.js   人工标注：任何字段 + 锁定规则
+│   ├── search.js     人话检索（工具/命令/HTTP 共用一份）
+│   ├── judge.js      「这张是不是表情包」——模型判定 + md5 缓存
+│   ├── pipeline.js   编排：接入→解析→判重→入库→分析（ingestBuffer 唯一判重）
+│   ├── archive.js    极简 ZIP 读写（STORE/DEFLATE，无第三方依赖）
+│   ├── backup.js     导出/导入：打包全库、还原时只补不覆盖
 │   ├── doctor.js     体检
 │   ├── commands.js   命令实现（薄）
 │   ├── tools.js      工具实现（薄，与命令同源）
@@ -63,14 +69,19 @@ index.js / client.js
         ↓
 commands.js / tools.js / http.js     ← 薄壳，不含业务判断
         ↓
-pipeline.js
+pipeline.js / annotate.js / charEdit.js / backup.js / search.js
         ↓
-parse / dhash / dedupe / analyze / characters
+parse / dhash / dedupe / analyze / characters / judge / archive
         ↓
-store.js / index.js
+store.js / db.js
 ```
 
-`client.js` 不在这条链上——它只能通过 HTTP 访问 Host。
+几条硬规矩：
+
+- **判重只有一份**：`pipeline.js` 的 `ingestBuffer()`，目录导入、`op=add`、QQ 收图都走它；
+- **检索判断只有一份**：`search.js`，`meme_find` 工具、`/meme find`、`op=find` 都调它；
+- **写库都有事件**：标注/改名/删除/判重拦截都会写 `events`，便于回溯；
+- `client.js` 不在这条链上——它只能通过 HTTP 访问 Host。
 
 ---
 
@@ -182,22 +193,42 @@ interface MemeBrain {
 }
 ```
 
-### 6.3 工具（模型用，M6）
+### 6.3 工具（模型用）
 
-`meme_find` / `meme_annotate` / `meme_dedupe` / `meme_status`
-——与命令同源，只做参数转换与结果摘要，不含逻辑。
+| 工具 | 作用 |
+|---|---|
+| `meme_find` | 找图（`query` 可写整句；和 `/meme find`、`op=find` 同一套判断） |
+| `meme_status` | 总量 / 角色分布 / 待办计数 |
+
+Aurabot 模块（`integrations/aurabot/meme-qq/`）另外注册一批 QQ 专用工具：
+`meme_send` / `qq_send_sticker` / `qq_list_stickers` / `qq_edit_sticker` /
+`qq_set_character` / `qq_collect_sticker` / `qq_save_sticker`。
 
 ### 6.4 HTTP（界面与外部用）
 
+响应结构固定：`{ ok: true, data }` 或 `{ ok: false, error: { code, message } }`；**仅 loopback**。
+
 ```
-POST /meme-brain/api
-  { op: 'list' | 'show' | 'annotate' | 'bulk' | 'dupes' | 'merge'
-        | 'todo' | 'char' | 'import' | 'export' | 'rebuild' | 'doctor' | 'explain'
-    ...args }
-→ { ok: true, data } | { ok: false, error: { code, message } }
+GET  /meme-brain/api?op=list&limit=&offset=&q=&state=&sort=&character=&todo=
+GET  /meme-brain/api?op=item&md5=<前缀>        → 全部分析字段
+GET  /meme-brain/api?op=image&md5=<前缀>       → 二进制
+GET  /meme-brain/api?op=facets                 → 筛选计数（角色含 0 张的占位）
+GET  /meme-brain/api?op=chars                  → 角色表 + 每张在库里的计数
+GET  /meme-brain/api?op=find&q=&character=&emotion=&scene=&limit=
+GET  /meme-brain/api?op=exports                → 已有导出包列表
+
+POST /meme-brain/api?op=add&source=qq          body=图片原始字节 → 判重入库
+POST /meme-brain/api?op=judge                  body=图片原始字节 → 模型判「是不是表情包」
+POST /meme-brain/api?op=analyze  {md5, tagsOnly?}
+POST /meme-brain/api?op=annotate {md5,name?,tags?,character?,appearance?,text?,scene?,target?,score?,pin?}
+POST /meme-brain/api?op=char-save {name, originalName?, look?, from?, aka?, kind?}
+POST /meme-brain/api?op=char-rm   {name, force?}
+POST /meme-brain/api?op=export                 → 打包到 exports/*.zip
+POST /meme-brain/api?op=import   {path}        → 从 zip 还原（只补不覆盖）
 ```
 
-仅 loopback；响应结构固定，便于界面渲染。
+命令 `/meme` 与工具、HTTP 覆盖同一批能力（G-1）；`/meme tag` 能改的字段和
+`op=annotate` 一致，`/meme char add|rm` 和 `char-save|char-rm` 一致。
 
 ---
 

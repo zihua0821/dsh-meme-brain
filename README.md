@@ -1,100 +1,118 @@
-# dsh-meme-brain
+# 表情包管理系统（dsh-meme-brain）
 
-> DeepSeek Harness 的表情包管理系统 — 从一张图进入系统，到被 AI 和人用上，全程有流程、有状态、有界面。
+给 **DeepSeek Harness** 用的本机表情包库：收图 → 判重 → 模型标注 → 检索 → 界面管理 → 接进 QQ。
 
-**状态**：设计定稿阶段，代码未开始
-**平台**：DeepSeek Harness 插件（Host + Web Client）
-**作者**：zy（UE 开发者，不维护前端代码）
-**最后更新**：2026-11-07
+> 一句话：**人能用、AI 能用、QQ 里也能用**，库只有一份，全部在本机。
 
 ---
 
-## 这是什么
+## 现在能做什么
 
-不是"一个表情库"，是**一套管理系统**：
+| 能力 | 说明 |
+|---|---|
+| **收图** | 目录导入、`POST op=add`、QQ 群里/私聊自动收（动图、表情段、模型判定过的普通图） |
+| **判重** | 三帧 dHash（256 位），字节级 md5 + 近似判重，**只有一份实现**（`ingestBuffer()`） |
+| **标注** | 模型看图输出：角色 / 把握度 / 招牌文字 / 外观 / 五维评分 / 场景 / 指向 / 意图标签 / 短名 |
+| **角色表** | 38 条（含吉伊卡哇三人组、兜底类别），**闭集**：模型只能从表里选，`look` 写成排他特征 |
+| **检索** | 人话：「生气的大肥鱼」「来张无语的」；工具 / 命令 / HTTP 共用一份判断 |
+| **界面** | 网格 + 筛选条 + 详情抽屉（**每个字段都能改**）+ 角色表编辑 + 刷新 + 导入导出 |
+| **QQ** | Aurabot 模块「表情脑」：发表情/收表情/找图/对话里改角色，**存图与回应互不干扰** |
+| **备份** | 导出成 zip（图 + 全部标注 + 角色表），导入**只补不覆盖** |
+| **体检** | `/meme doctor`：文件与索引独立核对，孤儿/缺文件/重复簇 |
+
+## 快速开始
+
+```powershell
+# 1) 装插件（profile 里 link 到本仓库，改代码即时生效）
+dsh plugin --profile desktop add link:F:\dsh-meme-brain
+
+# 2) 导一批图进来
+/meme import D:\我的表情包 --dry-run     # 先看会收多少、判重多少
+/meme import D:\我的表情包
+
+# 3) 让模型标注（要花钱，可以先小批量）
+/meme analyze --limit=20
+
+# 4) 界面看/改
+#    DSH 侧栏「表情包」→ 网格 → 点一张看详情
+```
+
+**接进 QQ**（另需 Aurabot）：
+
+```powershell
+node scripts/deploy-aurabot.mjs          # 部署「表情脑」模块，Aurabot 3 秒热加载
+# Aurabot 面板 → 系统 → 表情脑 → 参数都在那儿（14 项）
+```
+
+## 常用命令
 
 ```
-接入 → 解析 → 去重 → 入库 → 分析 → 索引 → 消费
+/meme doctor                              体检（文件与索引独立核对）
+/meme list [--character=大肥鱼 --todo=nochar --q= --limit=]
+/meme show <md5前缀>                       单张全部字段
+/meme find 生气的大肥鱼                     人话找图
+/meme tag <md5前缀> --character=doro --tags=卖萌 --appearance=... --unpin
+/meme char list | add <名字> [--look= --from= --aka=] | rm <名字> [--force]
+/meme analyze [--limit=N] [--force] [--md5=前缀] [--tags-only]
+/meme rm <md5前缀> [--yes]                 软删除（文件进 trash/，可恢复）
+/meme rebuild | repair | dupes | todo
 ```
 
-- **人对它做管理**：浏览、筛选、看分析结果、批量纠正、合并重复、导入导出
-- **AI 对它做检索**：按情绪、角色、对象找到合适的图，找不到就不发
-- **外部程序可以读**：本地 HTTP / 导出文件 /（后续）MCP
+## 数据在哪
 
-三端共享同一份数据和同一套判断。
+```
+%USERPROFILE%\.dsh\meme-brain\
+├── library/          图（<md5[0:2]>/<md5[2:4]>/<md5>.<ext>）
+├── index.db          SQLite（schema v3）
+├── characters.json   角色表
+├── judge-cache.json  「是不是表情包」的模型判定缓存（按 md5）
+├── exports/          导出的完整备份 zip
+├── backups/          索引快照
+└── trash/            `/meme rm` 删掉的文件（可恢复）
+```
 
----
-
-## 已定决策
-
-| # | 决策 | 记录 |
-|---|---|---|
-| ADR-0001 ~ 0006 | 自管存储 / dsh-meme 边界 / 索引可重建 / 判重前置 / 命令先行 / 不注入提示词 | [00-decisions.md](docs/00-decisions.md) |
-| ADR-0011 ~ 0019 | 短名 / 留标签 / 默认库路径 / 16MB 上限 / sharp 全格式 / 卸载 dsh-meme / 暂不导入 / 删旧草稿 / 禁止第二套表情能力 | [同上](docs/00-decisions.md) |
-| 待定 | ADR-0007 分析模型、ADR-0008 场景维度（阻塞 M4）；ADR-0009 界面、ADR-0010 MCP（阻塞 M8） | [同上](docs/00-decisions.md) |
-
----
+全部在本机；HTTP 只监听 `127.0.0.1`。
 
 ## 文档
 
 | 文件 | 内容 |
 |---|---|
-| [docs/01-requirements.md](docs/01-requirements.md) | 需求：流水线、状态机、功能需求、验收、里程碑 |
-| [docs/02-architecture.md](docs/02-architecture.md) | 架构：包结构、接口契约、数据模型、算法 |
-| [docs/03-engineering-contract.md](docs/03-engineering-contract.md) | **工程契约**：五条保证、设计规则、变更验证流程 |
-| [docs/04-acceptance.md](docs/04-acceptance.md) | **验收手册**：每个里程碑"做什么/怎么验/变化/怎么退" |
-| [docs/05-handoff.md](docs/05-handoff.md) | **上下文交接**：压缩上下文/换会话后从这里接着干 |
-| [docs/00-decisions.md](docs/00-decisions.md) | 决策记录（ADR），含背景、决定、后果 |
-| [research/](research/) | 立项前的实证脚本：dHash、格式统计、透明通道、跨库判重 |
+| [docs/00-decisions.md](docs/00-decisions.md) | **ADR-0001 ~ 0021**：每个拍过板的决定和理由 |
+| [docs/01-requirements.md](docs/01-requirements.md) | 需求：流水线、状态机、功能、验收标准 |
+| [docs/02-architecture.md](docs/02-architecture.md) | 架构：模块、依赖方向、数据模型、算法、接口 |
+| [docs/03-engineering-contract.md](docs/03-engineering-contract.md) | **工程契约**：五条保证、改动五步验证 |
+| [docs/04-acceptance.md](docs/04-acceptance.md) | **验收手册**：每个里程碑「做什么/怎么验/变化/怎么退」 |
+| [docs/05-handoff.md](docs/05-handoff.md) | **交接文档**：现在是什么状态、踩过哪些坑、下一步 |
+| [CHANGELOG.md](CHANGELOG.md) | 按里程碑的变更记录 |
 
----
+> 文档里的数量是**写那一刻**的快照。当前数字以 `/meme doctor` 或界面右上角为准。
 
-## 目录结构
+## 代码结构
 
 ```
-dsh-meme-brain/
-├── README.md
-├── docs/           设计文档（本项目的权威来源）
-├── research/       立项前的验证脚本（只读参考）
-├── src/            插件源码（待建）
-├── test/           测试与夹具（待建）
-└── package.json    DSH bundle 清单（待建）
+src/index.js     Host 入口（注册命令/工具/服务/路由）
+client.js        界面（只调 HTTP，无业务逻辑）
+src/lib/         业务：parse/dhash/dedupe/analyze/characters/search/annotate/
+                 charEdit/judge/pipeline/archive/backup/store/db/doctor/http
+scripts/         deploy-aurabot / import-characters / bulk-analyze / reanalyze / verify
+integrations/aurabot/meme-qq/   Aurabot 模块「表情脑」源码
 ```
 
----
-
-## 工程原则（一句话版）
-
-> **作者不读前端代码，因此正确性由结构保证：业务逻辑只在 Host，界面只渲染 JSON；任何操作都有非界面路径；数据用 `doctor` 自证。**
-
-完整内容见 [工程契约](docs/03-engineering-contract.md)。
-
----
-
-## 里程碑
-
-| # | 内容 | 状态 |
-|---|---|---|
-| M0 | 插件骨架（可安装、命令壳、`doctor`） | ✅ 已验收 |
-| M1 | 解析 + 哈希 + 判重（离线） | ✅ 53 项测试；真库判重 0 误报 |
-| M2 | 存储 + 索引 + 状态机 + 重建 | ✅ 已验收（schema v3） |
-| M3 | 管理命令集 | ✅ 已验收 |
-| M4 | 最简界面（网格 / 详情 / 单张编辑） | ✅ 已验收 |
-| M5 | 分析（七维评分 + 文字 + 外观） | ✅ 全量跑完（281/281 已分析） |
-| M6 | 角色表 + 标注 + 检索 | 🔶 75%：表/标注/锁定/检索可用；缺 L3 归纳、`bulk` |
-| M7 | AI 工具 + QQ 接入 | ✅ `meme_find`/`meme_status`/`/meme find` + Aurabot 模块「表情脑」 |
-| M8 | 采集接入（QQ） | ✅ 并入 M7-b：动图补录 + `op=add` 判重前置 |
-| M9 | 完整界面 + 导入导出 + HTTP | 🔶 详情/筛选/标注/单张分析完成；缺批量、导入导出 |
-
-当前 **281 张 / 169MB**，151 项测试全绿。详细状态见 [`docs/05-handoff.md`](docs/05-handoff.md)。
-
----
-
-## 如何验证（每个里程碑结束时都应有）
+## 测试
 
 ```powershell
-# 待实现：一份体检报告，不需要读代码就能判断系统是否健康
-dsh meme-brain doctor
+node --test "test/**/*.test.js"     # 全量
+node scripts/verify.mjs             # 文件与索引独立核对（不信数据库自述）
 ```
 
-预期输出形态见 [工程契约 §4](docs/03-engineering-contract.md)。
+## 已知边界
+
+- **不做自动删图**（`maxLibrary` 已否决）：自动删 = 数据损失。
+- **判重阈值固定**（avg≤4 且 max≤8）：真重复距离 0，非重复最近 11。
+- **「介于吉伊和乌萨奇之间」那个角色不认识**：按未知处理，不硬套。
+- **付费操作有三个**：分析（每张一次模型）、看图起名（可关）、普通图判定（可关/可缓存）。
+- Aurabot 面板的「表情库」卡片是死的（内置模块停用后接口 404），管库统一用 DSH 侧栏。
+
+## License
+
+MIT
