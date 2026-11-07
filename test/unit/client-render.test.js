@@ -294,6 +294,39 @@ function selectByValue(tree, value) {
   return findAll(tree, (n) => n.type === 'select' && n.props?.value === value)[0]
 }
 
+test('源码检查：组件里的 hook 不能写在提前 return 之后（否则面板会崩）', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../../client.js', import.meta.url), 'utf8')
+  const lines = src.split('\n')
+
+  // 逐个函数体检查：函数内出现第一个 return 之后，不允许再出现 useState/useEffect/useCallback
+  const offenders = []
+  let fnStart = -1
+  let fnName = ''
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i].match(/^\s{4}function ([A-Za-z0-9_]+)\s*\(/)
+    if (m) {
+      fnStart = i
+      fnName = m[1]
+      continue
+    }
+    if (fnStart < 0) continue
+
+    const isReturn = /^\s{6}if \(.*\) return /.test(lines[i]) || /^\s{6}return h\(/.test(lines[i])
+    if (isReturn) {
+      // 从这个 return 往后扫到函数结束，看有没有 hook
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (/^\s{4}\}/.test(lines[j])) break // 函数结束
+        if (/use(State|Effect|Callback|Memo)\(/.test(lines[j])) {
+          offenders.push(`${fnName}：第 ${j + 1} 行的 hook 在提前 return（第 ${i + 1} 行）之后`)
+        }
+      }
+    }
+  }
+
+  assert.deepEqual(offenders, [], `hook 顺序违规会导致整个面板白屏：\n${offenders.join('\n')}`)
+})
+
 test('详情：能看到角色、外观、场景、指向、评分与被分析元信息', async () => {
   resetHooks()
   currentItem = fullItem

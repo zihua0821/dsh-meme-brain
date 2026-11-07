@@ -181,6 +181,10 @@ window.__ModuleLoader__.load({
       // 所有可编辑字段放一个草稿里：改哪个保存就提交哪个（见 buildPatch）
       const [draft, setDraft] = useState(null)
       const [msg, setMsg] = useState('')
+      // 角色下拉的展开状态 / 高亮项。**必须和上面几个 hook 放一起**：
+      // 放在「载入中」的提前 return 之后会违反 hooks 顺序，整块面板会崩。
+      const [charOpen, setCharOpen] = useState(false)
+      const [charHi, setCharHi] = useState(0)
 
       const fromItem = (d) => ({
         name: d.name || '',
@@ -309,9 +313,7 @@ window.__ModuleLoader__.load({
       }
       const label = (text) => h('label', { style: { fontSize: 12, opacity: 0.7, display: 'block', marginTop: 4 } }, text)
 
-      // 角色下拉：打开状态 / 高亮项 / 按当前输入过滤后的候选
-      const [charOpen, setCharOpen] = useState(false)
-      const [charHi, setCharHi] = useState(0)
+      // 角色下拉：按当前输入过滤后的候选
       const charQuery = String(draft?.character || '').trim().toLowerCase()
       const charList = (characters || []).filter((c) => !charQuery || String(c).toLowerCase().includes(charQuery))
 
