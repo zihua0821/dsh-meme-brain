@@ -11,6 +11,7 @@ import { search } from './search.js'
 import { ingestBuffer } from './pipeline.js'
 import * as characterTable from './characters.js'
 import { saveCharacter, removeCharacter } from './charEdit.js'
+import { judgeBuffer } from './judge.js'
 import { INDEX_DB, absPath } from './store.js'
 
 const ROUTE = '/meme-brain/api'
@@ -227,6 +228,8 @@ async function handlePost(url, req, res, ctx) {
 
   // op=add 收原始字节，其余收 JSON
   if (op === 'add') return addOne(url, req, res)
+  // op=judge 也收原始字节：判「这张是不是表情包」，不写库
+  if (op === 'judge') return judgeOne(ctx, req, res)
 
   const body = await readJson(req)
   const db = open()
@@ -291,6 +294,33 @@ async function handlePost(url, req, res, ctx) {
 
 // 正在分析的 md5：防止连点把同一张送去模型好几次（既费钱又互相覆盖结果）
 const inFlight = new Set()
+
+/**
+ * 判断一张图的字节是不是「表情包」（不写库）。
+ *
+ * 为什么不并进 op=add：判定要花一次模型调用，而大多数图（动图 / QQ 标记的表情段）
+ * 根本不需要判。把它做成独立入口，模块只在「拿不准」的时候来问，钱花在刀刃上。
+ */
+async function judgeOne(ctx, req, res) {
+  let buf
+  try {
+    buf = await readRaw(req)
+  } catch (error) {
+    return sendJson(res, 413, { ok: false, error: { code: 'E_TOO_LARGE', message: error.message } })
+  }
+  if (!buf || !buf.length) {
+    return sendJson(res, 400, { ok: false, error: { code: 'E_EMPTY_BODY', message: '没有收到图片字节' } })
+  }
+
+  const r = await judgeBuffer(ctx, buf)
+  if (!r.ok) {
+    return sendJson(res, 503, { ok: false, error: { code: r.code, message: r.message } })
+  }
+  return sendJson(res, 200, {
+    ok: true,
+    data: { sticker: r.sticker, why: r.why, md5: r.md5, cached: Boolean(r.cached) },
+  })
+}
 
 /**
  * 收一张图的字节并入库（QQ 补录用）。

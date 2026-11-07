@@ -52,6 +52,8 @@ const ANIMATED_IMAGE = Buffer.concat([
 ])
 let imageBytes = FAKE_IMAGE
 let addSeq = 0
+// 模型判定的返回值，测试里按场景改
+let judgeVerdict = { sticker: false, why: '截图' }
 globalThis.fetch = async (url, init) => {
   const u = String(url)
   fetched.push({ url: u, method: init?.method || 'GET' })
@@ -61,6 +63,8 @@ globalThis.fetch = async (url, init) => {
     if (u.includes('op=add')) {
       addSeq += 1
       data = { added: true, md5: String(addSeq).padStart(32, '0'), near: null, item: { name: '' } }
+    } else if (u.includes('op=judge')) {
+      data = { sticker: judgeVerdict.sticker, why: judgeVerdict.why, md5: 'judged', cached: Boolean(judgeVerdict.cached) }
     } else if (u.includes('op=analyze')) {
       data = { item: { name: '起的名' }, result: { ok: 1, failed: [], skipped: [] } }
     } else {
@@ -168,8 +172,8 @@ test('模块定义：名字和插件绑定 + 独立页（不挂内置页签）',
   const keys = (mod.settings || []).map((s) => s.key).sort()
   assert.deepEqual(keys, [
     'autoChance', 'caption', 'collect', 'collectMode', 'collectPlain', 'enabled', 'faces',
-    'fromGroups', 'fromPrivate', 'maxMB', 'maxPerHour', 'maxSendMB',
-  ], '12 个参数：8 个必要 + 2 个上限 + collectPlain（普通图片开关）+ faces')
+    'fromGroups', 'fromPrivate', 'judgeMode', 'maxMB', 'maxPerHour', 'maxSendMB',
+  ], '13 个参数：8 个必要 + 2 个上限 + judgeMode（普通图判定）+ collectPlain（旧口径）+ faces')
   // maxLibrary 已决定不做（自动删图 = 数据损失）
   assert.ok(!keys.includes('maxLibrary'))
 })
@@ -333,35 +337,55 @@ test('主人发图被自动收集：同样不影响她怎么回', async () => {
   assert.equal(out, undefined, '自动收集也不该干扰她的回复')
 })
 
-test('收表情：普通静态图片默认不收（除非打开「普通图片也收」）', async () => {
-  const { handlers } = await load({}, { caption: false, collectPlain: false })
-  imageBytes = FAKE_IMAGE
+test('普通图：模型判定是表情包 → 收（哪怕形状不标准）', async () => {
+  const { handlers } = await load({}, { caption: false, judgeMode: 'model' })
+  imageBytes = Buffer.from('GIF89a\x84\x03\xbc\x02', 'binary') // 900x700，按尺寸会被挡
+  judgeVerdict = { sticker: true, why: '梗图' }
   fetched.length = 0
-  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'a'.repeat(32) + '.png', sub_type: 0 } }] })
-  await new Promise((r) => setTimeout(r, 120))
-  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '默认不收普通图片')
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'd'.repeat(32) + '.png', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 150))
+  assert.ok(fetched.some((f) => f.url.includes('op=judge')), '问过模型')
+  assert.ok(fetched.some((f) => f.url.includes('op=add')), '模型说是，就该收')
   imageBytes = FAKE_IMAGE
 })
 
-test('收表情：打开 collectPlain 后，小的近方图照收', async () => {
-  const { handlers } = await load({}, { caption: false, collectPlain: true })
-  // 200x200 的假图：让 imageSize 能读出来（用真实 PNG 头最省事，这里用 GIF 头 + 逻辑尺寸）
-  imageBytes = Buffer.from('GIF89a\xc8\x00\xc8\x00', 'binary') // 宽高各 200
+test('普通图：模型判定不是表情包 → 不收，而且不去猜尺寸', async () => {
+  const { handlers } = await load({}, { caption: false, judgeMode: 'model' })
+  imageBytes = Buffer.from('GIF89a\xc8\x00\xc8\x00', 'binary') // 200x200，按尺寸会收
+  judgeVerdict = { sticker: false, why: '游戏截图' }
   fetched.length = 0
-  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'b'.repeat(32) + '.gif', sub_type: 0 } }] })
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'e'.repeat(32) + '.png', sub_type: 0 } }] })
   await new Promise((r) => setTimeout(r, 150))
-  assert.ok(fetched.some((f) => f.url.includes('op=add')), '小方图应该收')
+  assert.ok(fetched.some((f) => f.url.includes('op=judge')), '问过模型')
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '模型说不是，就不收')
   imageBytes = FAKE_IMAGE
 })
 
-test('收表情：打开 collectPlain 后，大截图仍然不收', async () => {
-  const { handlers } = await load({}, { caption: false, collectPlain: true })
-  // 900x700 的假图：超过边长 600 的闸门
-  imageBytes = Buffer.from('GIF89a\x84\x03\xbc\x02', 'binary')
+test('普通图：模型挂了 → 退回按尺寸猜（不因为判定失败就不收）', async () => {
+  const { handlers } = await load({}, { caption: false, judgeMode: 'model' })
+  imageBytes = Buffer.from('GIF89a\xc8\x00\xc8\x00', 'binary') // 200x200 近方形
+  judgeVerdict = { sticker: false, why: '' }
+  const before = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('op=judge')) throw new Error('模型超时')
+    return before(url, init)
+  }
   fetched.length = 0
-  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'c'.repeat(32) + '.png', sub_type: 0 } }] })
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'f'.repeat(32) + '.png', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 200))
+  globalThis.fetch = before
+  assert.ok(fetched.some((f) => f.url.includes('op=add')), '判定失败时退回尺寸判断，小方图照收')
+  imageBytes = FAKE_IMAGE
+})
+
+test('普通图：judgeMode=off 时不问模型也不收', async () => {
+  const { handlers } = await load({}, { caption: false, judgeMode: 'off' })
+  imageBytes = Buffer.from('GIF89a\xc8\x00\xc8\x00', 'binary')
+  fetched.length = 0
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'g'.repeat(32) + '.png', sub_type: 0 } }] })
   await new Promise((r) => setTimeout(r, 150))
-  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '大截图不该收')
+  assert.ok(!fetched.some((f) => f.url.includes('op=judge')), 'off 就不该花模型的钱')
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')))
   imageBytes = FAKE_IMAGE
 })
 

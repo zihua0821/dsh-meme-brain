@@ -76,10 +76,14 @@ GET  /meme-brain/api?op=list&limit=&offset=&q=&state=&sort=&character=&todo=
 GET  /meme-brain/api?op=item&md5=<前缀>          → 全部分析字段（detailItem）
 GET  /meme-brain/api?op=facets                   → 筛选条计数（角色分布/待办/锁定数）
 GET  /meme-brain/api?op=find&q=&character=&emotion=&scene=&limit=  → 人话检索（和工具同一套）
+GET  /meme-brain/api?op=chars                    → 角色表 + 每张在库里的计数
 GET  /meme-brain/api?op=image&md5=<前缀>        → 二进制
 POST /meme-brain/api?op=annotate  {md5,name?,tags?,character?,pin?}
 POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，串行，锁定则 skipped）
 POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库（QQ 补录用）
+POST /meme-brain/api?op=judge  body=图片原始字节  → 模型判「是不是表情包」（不写库，带缓存）
+POST /meme-brain/api?op=char-save {name,originalName?,look?,from?,aka?,kind?}
+POST /meme-brain/api?op=char-rm   {name,force?}   → 有图在用时 409 E_IN_USE
 ```
 
 标注规则（`src/lib/annotate.js`）：填角色 → 写角色表（没有就新建，出处 `ui`）+ `pinned=1` + 把握标 `人工`；清空角色 → 解锁交还模型；`pin:false` → 解锁。**只有改角色才上锁**，改名字/标签不动锁定状态。
@@ -124,17 +128,20 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 | 自动配表情（`stickers.autoChance`） | `reply/items` 里按本模块概率补一张 |
 | 偷表情（hub 调内置 `collect`） | 自己的 `message` 监听 |
 
-**收表情的判定（只用确凿证据，不猜文件名）**：
+**收表情的判定（ADR-0020：内容问题交给模型）**：
 1. 字节是真动图（GIF 多帧 / 动 WebP / APNG）→ 收（内置漏掉的就是这类）
 2. QQ 自己标成表情段（`sub_type` = 1 收藏 / 7 大表情 / 11 动图表情）→ 收
-3. 普通静态图 → **默认不收**；打开设置「普通图片也收」后，只有**近方形（0.6~1.7）、边长 ≤ 600、≤ 512KB** 的才收（群里的截图/长图仍被挡）
+3. 其余普通静态图 → **问模型**（`POST op=judge`，只回 `{sticker,why}`），是就收、不是记日志
+   - 结果按 md5 缓存在 `judge-cache.json`，同图重发不再花钱
+   - 模型不可用 → 退回尺寸兜底（近方形 0.6~1.7、边长≤600、≤512KB）
+   - 参数 `judgeMode`：`model`（默认）/ `size` / `off`
 
-> 踩过的坑：曾经用「文件名像 `<32位md5>.jpg` 就当表情」，而 QQ 给所有图片都起这种名字 → 收进了两张游戏截图。收紧后又走到另一个极端（普通图全不收），所以补了 `collectPlain` 开关 + 形状闸门。
+> 踩过的坑：先用「文件名像 md5」→ 收进两张游戏截图；再用「只收动图+表情段」→ 群里普通图片段的表情包全漏；再用「按尺寸猜」→ 代理指标，边界必错。最后走模型判定（ADR-0020）。
 
 - 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
 - **存图与回应是两条独立的路（原则）**：存图是后台动作，绝不改写她的回复；她想说话就说话、想甩表情就甩表情。工具结果做得极淡（只回一个「好」），规则里只要求「别提存图、别提库」。~~早期版本用 `saveSignal` 删文字强塞表情，已废弃~~
 - 命令：`/表情 <关键词>`
-- **参数在面板「系统」→ 表情脑**（模块独立页），12 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / **普通图片也收** / 夹小黄脸
+- **参数在面板「系统」→ 表情脑**（模块独立页），13 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / **普通图片怎么判** / （旧）按尺寸收 / 夹小黄脸
 - ⚠️ **进不了「表达」**：`TAB_MODS = { stickers: ['stickers'] }`，那个页签只在内置模块运行时才存在；而自定义页只能落「平台/系统」。
 - **镜像**：`config.stickers` 里 hub 还认的字段（`enabled` 恒 false、`faces`、`collect`、`collectMode`、`fromGroups`、`fromPrivate`）由模块写过去，否则 hub 的提示会和设置不同步
 - 不做：`maxLibrary`（自动删图 = 数据损失）

@@ -63,7 +63,8 @@ const DEFAULTS = {
   caption: true,          // 看图起名（唯一花钱的开关）
   maxMB: 8,               // 收取单张上限
   maxSendMB: 5,           // 发送单张上限
-  collectPlain: false,    // 普通图片（QQ 没标成表情段的）也收，但得过「像表情」的闸门
+  collectPlain: false,    // 旧口径：普通图片按尺寸猜（judgeMode=size 时才用）
+  judgeMode: 'model',     // 普通图片怎么判：model=问模型 / size=按尺寸猜 / off=不收
   faces: true,            // 夹 QQ 小黄脸（不是本库的功能，但面板页挪走后只有这里能改）
 }
 
@@ -93,7 +94,12 @@ export default {
     { key: 'caption', label: '看图起名', type: 'switch', hint: '收下后调一次视觉模型起名打分。关掉就只按 md5 存着，之后在界面里补' },
     { key: 'maxMB', label: '收取单张上限（MB）', type: 'number', min: 1, max: 32, step: 1, hint: '内置卡 1.5MB，大动图永远收不进来；这里放宽' },
     { key: 'maxSendMB', label: '发送单张上限（MB）', type: 'number', min: 1, max: 16, step: 1, hint: '超过就不发（发出去会被网关拒）。库里 269/275 张在 5MB 内' },
-    { key: 'collectPlain', label: '普通图片也收', type: 'switch', hint: '默认关：只收动图和 QQ 标成表情段的。打开后还会收「像表情」的普通图（近方形、边长≤600、≤512KB）；群里的截图和长图仍然不收' },
+    { key: 'judgeMode', label: '普通图片怎么判', type: 'select', options: [
+      { value: 'model', label: '问模型（准，每张一次调用，有缓存）' },
+      { value: 'size', label: '按尺寸猜（免费，会漏也会错）' },
+      { value: 'off', label: '不收普通图片' },
+    ], hint: '群里发的表情包经常就是普通图片（QQ 不标表情段），只能看图判断。选「问模型」后同图只判一次，结果缓存在 judge-cache.json' },
+    { key: 'collectPlain', label: '（旧）按尺寸收普通图片', type: 'switch', hint: '只在「普通图片怎么判=按尺寸猜」时生效：近方形、边长≤600、≤512KB' },
     { key: 'faces', label: '夹 QQ 小黄脸', type: 'switch', hint: '回复里能夹 /捂脸 /斜眼笑 这种系统表情。这是插件本来的功能，不属于表情库，但归到这里统一管' },
   ],
 
@@ -177,6 +183,25 @@ export default {
       const j = await res.json().catch(() => null)
       if (!j) throw new Error(`入库返回的不是 JSON（HTTP ${res.status}）`)
       if (!j.ok) throw new Error(j.error?.message || j.error?.code || '入库失败')
+      return j.data
+    }
+
+    /**
+     * 问 Host：「这张是不是表情包？」
+     * 模型调用可能要几秒，给 20 秒；失败就抛，让调用方退回按尺寸猜。
+     */
+    async function judgeRemote(buf) {
+      const base = origin()
+      if (!base) throw new Error('拿不到 DSH 的 HTTP 地址')
+      const res = await fetch(`${base}/meme-brain/api?op=judge`, {
+        method: 'POST',
+        body: buf,
+        headers: { 'content-type': 'application/octet-stream' },
+        signal: AbortSignal.timeout(20000),
+      })
+      const j = await res.json().catch(() => null)
+      if (!j) throw new Error(`判定返回的不是 JSON（HTTP ${res.status}）`)
+      if (!j.ok) throw new Error(j.error?.message || j.error?.code || '判定失败')
       return j.data
     }
 
@@ -567,16 +592,40 @@ export default {
 
       if (!animated && !marked) {
         const s = settings()
-        if (s.collectPlain !== true) {
-          log.debug(`不像表情，跳过（sub_type=${subTypeOf(seg) || '无'}，${Math.round(buf.length / 1024)}KB；要收普通图请在设置里打开「普通图片也收」）`)
+        const mode = String(s.judgeMode || 'model')
+
+        if (mode === 'off' || (mode === 'size' && s.collectPlain !== true)) {
+          log.debug(`不像表情，跳过（sub_type=${subTypeOf(seg) || '无'}，${Math.round(buf.length / 1024)}KB；当前「普通图片怎么判」=${mode}）`)
           return false
         }
+
+        if (mode === 'model') {
+          // 唯一需要看图判断的类别：问模型。模型有结论就以它为准（内容 > 尺寸）
+          let verdict = null
+          try {
+            verdict = await judgeRemote(buf)
+          } catch (error) {
+            log.debug('模型判定失败，退回按尺寸猜：', error.message)
+          }
+          if (verdict) {
+            if (!verdict.sticker) {
+              log.info(`这张不是表情包，不收（${verdict.why || '模型判断'}${verdict.cached ? '，缓存' : ''}）`)
+              return false
+            }
+            log.info(`模型判定是表情包（${verdict.why || '无误'}${verdict.cached ? '，缓存' : ''}）`)
+            const r = await ingest(buf, 'qq')
+            if (r && !r.ok && r.reason) log.debug(`没入库：${r.reason}`)
+            return Boolean(r && r.ok)
+          }
+          log.debug('模型没给结论，改用尺寸兜底')
+        }
+
         if (!looksLikeSticker(buf)) {
           const size = sizeOf(buf)
           log.debug(`普通图片不像表情，跳过（${size ? `${size.width}x${size.height}` : '尺寸未知'}，${Math.round(buf.length / 1024)}KB）`)
           return false
         }
-        log.info(`收了一张普通图片（近方形、${Math.round(buf.length / 1024)}KB）`)
+        log.info(`收了一张普通图片（${Math.round(buf.length / 1024)}KB）`)
       }
 
       const r = await ingest(buf, 'qq')
