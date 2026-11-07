@@ -208,14 +208,23 @@ export async function runAnalyze(ctx, index, opts = {}) {
   const limit = Math.max(1, Math.min(200, Number(opts.limit) || 10))
   const batchSize = Math.max(1, Math.min(6, Number(opts.batchSize) || 4))
   const force = Boolean(opts.force)
+  const includePinned = Boolean(opts.includePinned)
 
+  const skipped = []
   let rows
   if (opts.md5) {
     rows = [db.findByPrefix(index, opts.md5).row].filter(Boolean)
+    // 指定单张时也要尊重人工锁定，但要说清楚为什么没跑（不能静默跳过）
+    rows = rows.filter((row) => {
+      if (!row.pinned || includePinned) return true
+      skipped.push({ md5: row.md5, message: '已人工锁定，跳过（确实要重跑加 --include-pinned）' })
+      return false
+    })
   } else {
     const conds = []
     const params = []
     if (!force) conds.push('analyzed_at IS NULL')
+    if (!includePinned) conds.push('pinned = 0')
     if (opts.appearance) {
       conds.push('appearance LIKE ?')
       params.push(`%${opts.appearance}%`)
@@ -230,7 +239,7 @@ export async function runAnalyze(ctx, index, opts = {}) {
 
   const characters = characterTable.promptList()
   const model = ctx.agentDefaultModel?.currentSelection?.()?.model || ''
-  const result = { total: rows.length, ok: 0, failed: [], named: 0 }
+  const result = { total: rows.length, ok: 0, failed: [], named: 0, skipped }
 
   for (let i = 0; i < rows.length; i += batchSize) {
     const chunk = rows.slice(i, i + batchSize)
@@ -289,7 +298,7 @@ export async function runAnalyze(ctx, index, opts = {}) {
 
   db.addEvent(index, {
     action: 'analyze',
-    detail: JSON.stringify({ ok: result.ok, failed: result.failed.length, model }),
+    detail: JSON.stringify({ ok: result.ok, failed: result.failed.length, skipped: skipped.length, model }),
   })
   return result
 }

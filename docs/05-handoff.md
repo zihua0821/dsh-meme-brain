@@ -8,10 +8,11 @@
 ## 0. 复核快照（每次新会话先看这节）
 
 ```
-node --test "test/**/*.test.js"   → 53 pass / 0 fail
+node --test "test/**/*.test.js"   → 90 pass / 0 fail
 node scripts/verify.mjs           → 275 文件 / 275 记录 / 孤儿 0 / 缺文件 0 / 重复对 0
-GET :<port>/meme-brain/api?op=list → 200，total=275   （能返回 = Host 已加载）
-git status                        → clean @ 69cb089（+ 本次交接文档修订）
+GET :<port>/meme-brain/api?op=list   → 200，total=275      （能返回 = Host 已加载）
+GET :<port>/meme-brain/api?op=facets → 角色分布 26/21/11/6/1，未知角色 210
+git status                        → clean（当前 HEAD 见 git log）
 ```
 
 指标与下表一致：275 / 271 已分析 / 265 有外观 / 65 有角色 / schema v3 / 角色表 6 条。
@@ -30,27 +31,33 @@ git status                        → clean @ 69cb089（+ 本次交接文档修�
 
 ```
 /meme doctor                     体检
-/meme list [--limit=10 --offset=0 --state= --character= --q= --appearance= --sort=]
+/meme list [--limit=10 --offset=0 --state= --character= --todo= --q= --appearance= --sort=]
+        --character=大肥鱼        按角色筛；未知角色写 --character=__none__
+        --todo=unanalyzed|unnamed|notags|nochar   按待办筛
 /meme show <md5前缀>              单张全部字段
 /meme dupes                      重复簇
 /meme todo                       待办计数
+/meme tag <md5前缀> [--name= --tags= --character= --unpin]
+        人工标注：填新角色会自动建表项；改角色会上锁；--unpin 解锁
 /meme import <目录> [--dry-run]   导入（判重前置）
 /meme backfill <源目录> [--force] 从源库 index.json 回填名字/标签
-/meme analyze [--limit=N] [--force] [--rename] [--md5=] [--appearance=] [--name=] [--batch=4]
+/meme analyze [--limit=N] [--force] [--rename] [--include-pinned] [--md5=] [--appearance=] [--name=] [--batch=4]
 /meme char list | add <名字> [--look= --from= --kind=character|meme] | rm <名字>
 /meme rebuild                    从库文件重建索引（保留分析结果）
 /meme repair [--orphans|--missing]
 ```
 
-**两个容易踩的开关语义**：
+**容易踩的开关语义**：
 - `--force`：重跑已分析的图，**不动名字**
 - `--rename`：才允许模型改写名字（保护人工标注）
+- `--include-pinned`：人工锁定的条目默认被跳过，加这个才一起重跑
 
 ### 界面
 
-DSH 侧栏「表情包」图标 → 主区：网格 + 搜索 + 详情抽屉。
+DSH 侧栏「表情包」图标 → 主区：筛选条 + 网格 + 详情抽屉。
+- 筛选条：全部 / 未分析 / 未命名 / 无标签 / 未知角色 / 各角色（都带张数，来自 `op=facets`）
 - 网格：每格图 + 名字 + 角色名
-- 详情抽屉（M9-a 之后）：名字/标签可改 + **分析结果**（角色/把握/外观/场景/指向/图上文字）+ **评分**（五维条形）+ **文件与来源**（md5/指纹/状态/重复/来源/入库/分析模型与时间）
+- 详情抽屉：名字/标签/**角色**可改（角色留空=未知）；**分析结果**（角色/把握/外观/场景/指向/图上文字）+ **评分**（五维条形）+ **文件与来源**（md5/指纹/状态/重复/来源/入库/分析模型与时间）；锁定的条目有「解除锁定」
 - 未分析的图给出可复制的 `/meme analyze --md5=xxxxxxxx`
 
 数据全部来自 `GET/POST /meme-brain/api`（仅 127.0.0.1）。
@@ -58,13 +65,16 @@ DSH 侧栏「表情包」图标 → 主区：网格 + 搜索 + 详情抽屉。
 ### HTTP API
 
 ```
-GET  /meme-brain/api?op=list&limit=&offset=&q=&state=&sort=
+GET  /meme-brain/api?op=list&limit=&offset=&q=&state=&sort=&character=&todo=
 GET  /meme-brain/api?op=item&md5=<前缀>          → 全部分析字段（detailItem）
+GET  /meme-brain/api?op=facets                   → 筛选条计数（角色分布/待办/锁定数）
 GET  /meme-brain/api?op=image&md5=<前缀>        → 二进制
-POST /meme-brain/api?op=annotate  {md5,name?,tags?}
+POST /meme-brain/api?op=annotate  {md5,name?,tags?,character?,pin?}
 ```
 
-`op=item` 的字段装配在 `src/lib/http.js` 的 `detailItem()` / `parseScore()`，有 7 项单测盯着；界面渲染有 3 项「无浏览器冒烟测试」（`test/unit/client-render.test.js`）。
+标注规则（`src/lib/annotate.js`）：填角色 → 写角色表（没有就新建，出处 `ui`）+ `pinned=1` + 把握标 `人工`；清空角色 → 解锁交还模型；`pin:false` → 解锁。**只有改角色才上锁**，改名字/标签不动锁定状态。
+
+`op=item` 的字段装配在 `src/lib/http.js` 的 `detailItem()` / `parseScore()`。
 
 ---
 
@@ -103,10 +113,10 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?}
 | M3 | 管理命令集（list/show/dupes/todo/backfill） | ✅ 已验收 |
 | M4 | 最简界面（网格/详情/编辑）+ HTTP | ✅ 已验收 |
 | M5 | 七维分析 + 外观 + 角色注入 | ✅ 已跑全量 |
-| M6 | 角色表 + 检索 | 🔶 做了 70%：表/命令/规范化/`--character` 检索；**缺** L3 归纳、批量标注、pinned |
+| M6 | 角色表 + 检索 | 🔶 75%：表/命令/规范化/`--character` 检索/**人工标注 + pinned 锁定**；**缺** L3 归纳、批量标注 `bulk` |
 | M7 | AI 工具 `meme_find` + cordis 服务 `memeBrain` | ⬜ 未开始 |
 | M8 | QQ 采集接入（中继模块）+ 判重前置 | ⬜ 未开始 |
-| M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 已完成**（详情页显示全部分析结果）；缺批量操作、待办视图、导入导出 |
+| M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 详情页 + M9-b 筛选条/实时标注/锁定已完成**；缺批量操作、导入导出 |
 
 ---
 
@@ -146,6 +156,7 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?}
 | 坑 | 事实 |
 |---|---|
 | **BOM 吃数据** | `Set-Content -Encoding utf8` 写 BOM，`JSON.parse` 抛错被静默吞掉 → 角色表被清空过一次。已修：剥 BOM + `lastLoadError` |
+| **别用 PowerShell 改中文文件** | 这台机器上 `pwsh` 实际是 PowerShell 5.1：`Get-Content -Raw` 按 GBK 读 UTF-8 文件 → `Set-Content` 写回后整篇中文变乱码（`docs/04-acceptance.md` 中过一次，靠 `git checkout --` 救回）。**改文档/代码一律用编辑工具，不用 shell 重写文件** |
 | `maxTokens: 2000` 太小 | 4 张图 × 13 字段会被截断（8 次失败）。已改 4000 |
 | 角色名带标注 | 提示词里写「龙图（梗模板）」，模型原样抄回 → 存成 `龙图（梗模板）`。已修：`normalizeName()` 剥括号、认别名、查表 |
 | `--force` 会覆盖名字 | 已拆开：`--force` 只重跑分数，`--rename` 才改名 |
@@ -166,15 +177,22 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?}
 3. `大肥鱼飞起`、`惬意doro` 没被认出来（描述偏向女仆装/玫瑰饰）
 4. `ggbond` 只有 1 张，样本太少
 5. 210 张仍是「未知角色」——角色表只有 6 条，且它们已经分析过，要 `--force` 重跑才会更新角色
-6. 没有 `pinned` 保护机制：`items.pinned` 列从 v1 就在 schema 里，但 **0 行使用、没有任何写入路径**（`/meme` 和 HTTP 都不写它）
-7. 没有批量标注命令（`bulk`）
-8. ~~项目尚未 git init~~ → **已初始化并提交**（`4072774`，54 个文件；`.gitignore` 排除 node_modules 与临时文件）
+6. ~~没有 `pinned` 保护机制~~ → **M9-b 已实现**：手工改角色 → `pinned=1` + 把握标 `人工`；`analyze` 默认跳过，`--include-pinned` 才放行；界面可解锁
+7. 没有批量标注命令（`bulk`）：现在只能一张一张点
+8. ~~项目尚未 git init~~ → **已初始化并提交**（`4072774`）；当前 HEAD 见 `git log`
+9. 界面无法触发分析（只能看和改标注）；筛选条不含「疑似重复」（要算 dHash 聚类，代价高，暂未做）
 
 ---
 
 ## 9. 下一步
 
-**待你拍板**：是否现在重跑 210 张的角色识别（约 ¥0.2，`/meme analyze --force --limit=250`）。
+**待你拍板**：是否重跑 210 张的角色识别（约 ¥0.2，`/meme analyze --force --limit=250`）。
+现在有了锁定机制，重跑不会再动你手工标过的角色。
+
+**界面下一步候选**（按价值排序）：
+1. **批量标注 `bulk`**：框选多张 → 打同一批标签/同一角色（210 张一张一张点太慢）
+2. 详情里「保存并下一张」：连续标注时省一次点击
+3. 待办视图里直接内联编辑（不点开抽屉）
 
 **M7 计划**（未开工）：
 - `src/lib/tools.js`：`meme_find` / `meme_annotate` / `meme_dedupe` / `meme_status`

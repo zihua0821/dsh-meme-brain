@@ -180,10 +180,19 @@ export function recentEvents(db, limit = 20) {
   return db.prepare('SELECT * FROM events ORDER BY id DESC LIMIT ?').all(limit)
 }
 
+/** 待办筛选的四种口径（界面与命令共用，别各写一份） */
+export const TODO_KINDS = ['unanalyzed', 'unnamed', 'notags', 'nochar']
+
+const EMPTY_TEXT = (col) => `(${col} IS NULL OR ${col} = '')`
+
+/** 未知角色在 URL 里用这个哨兵值，避免和真角色名撞车 */
+export const UNKNOWN_CHARACTER = '__none__'
+
 /**
  * 条件查询（列表用）。
  * @param {object} index
- * @param {{state?:string, q?:string, sort?:string, limit?:number, offset?:number}} opts
+ * @param {{state?:string, q?:string, sort?:string, limit?:number, offset?:number,
+ *          character?:string, todo?:string}} opts
  */
 export function queryItems(index, opts = {}) {
   const where = []
@@ -201,10 +210,19 @@ export function queryItems(index, opts = {}) {
     where.push('appearance LIKE ?')
     params.push(`%${opts.appearance}%`)
   }
-  if (opts.character) {
+  if (opts.character === UNKNOWN_CHARACTER) {
+    where.push(EMPTY_TEXT('character'))
+  } else if (opts.character) {
     where.push('character = ?')
     params.push(opts.character)
   }
+  const todo = String(opts.todo || '')
+  if (todo === 'unanalyzed') where.push('analyzed_at IS NULL')
+  else if (todo === 'unnamed') where.push(EMPTY_TEXT('name'))
+  else if (todo === 'notags') where.push(EMPTY_TEXT('tags'))
+  else if (todo === 'nochar') where.push(EMPTY_TEXT('character'))
+  else if (todo) throw new Error(`未知的 todo 筛选：${todo}`)
+
   const w = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const order =
     opts.sort === 'size' ? 'bytes DESC'
@@ -236,4 +254,31 @@ export function summary(index) {
   )
   const unanalyzed = Number(index.prepare('SELECT COUNT(*) AS n FROM items WHERE analyzed_at IS NULL').get()?.n || 0)
   return { total, states, unanalyzed }
+}
+
+/**
+ * 筛选条用的统计：一次查完，界面不用自己算。
+ * 角色按张数倒序；未知角色单独一项。
+ */
+export function facets(index) {
+  const one = (sql) => Number(index.prepare(sql).get()?.n || 0)
+  const characters = index
+    .prepare(`SELECT character AS name, COUNT(*) AS n FROM items
+              WHERE character IS NOT NULL AND character <> ''
+              GROUP BY character ORDER BY n DESC, name ASC`)
+    .all()
+    .map((r) => ({ name: r.name, count: Number(r.n) }))
+
+  return {
+    total: one('SELECT COUNT(*) AS n FROM items'),
+    characters,
+    unknownCharacter: one(`SELECT COUNT(*) AS n FROM items WHERE ${EMPTY_TEXT('character')}`),
+    todo: {
+      unanalyzed: one('SELECT COUNT(*) AS n FROM items WHERE analyzed_at IS NULL'),
+      unnamed: one(`SELECT COUNT(*) AS n FROM items WHERE ${EMPTY_TEXT('name')}`),
+      notags: one(`SELECT COUNT(*) AS n FROM items WHERE ${EMPTY_TEXT('tags')}`),
+      nochar: one(`SELECT COUNT(*) AS n FROM items WHERE ${EMPTY_TEXT('character')}`),
+    },
+    pinned: one('SELECT COUNT(*) AS n FROM items WHERE pinned = 1'),
+  }
 }

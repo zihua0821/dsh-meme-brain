@@ -117,3 +117,23 @@ export function normalizeName(raw) {
   const byPart = rows.find((c) => s.length >= 2 && (s.includes(c.name) || c.name.includes(s)))
   return byPart ? byPart.name : ''
 }
+
+/**
+ * 人工输入用的对齐：只认「完全相同」和「别名」，**不做包含匹配**。
+ *
+ * 为什么和 normalizeName 分开：模型输出可以猜（"龙图（梗模板）"），
+ * 但人在输入框里敲的字就是他想要的——把「大肥鱼飞起」模糊成「大肥鱼」
+ * 会把一次明确的人工判断改掉。对不上就是新角色。
+ */
+export function matchExact(raw) {
+  const s = String(raw || '')
+    .replace(/[（(][^)）]*[)）]/g, '')
+    .trim()
+  if (!s) return ''
+  const lower = s.toLowerCase()
+  const rows = list()
+  const exact = rows.find((c) => c.name === s || c.name.toLowerCase() === lower)
+  if (exact) return exact.name
+  const byAlias = rows.find((c) => (c.aka || []).some((a) => String(a).toLowerCase() === lower))
+  return byAlias ? byAlias.name : ''
+}

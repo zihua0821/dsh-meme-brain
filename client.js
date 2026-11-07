@@ -13,17 +13,25 @@ window.__ModuleLoader__.load({
 
     const API = '/meme-brain/api'
 
+    /** 空值不进 query string：否则 character=undefined 会被当成一个筛选项 */
+    function qs(params) {
+      const p = new URLSearchParams()
+      for (const [k, v] of Object.entries(params)) {
+        if (v === undefined || v === null || v === '') continue
+        p.set(k, String(v))
+      }
+      return p.toString()
+    }
+
     async function get(params) {
-      const qs = new URLSearchParams(params).toString()
-      const res = await fetch(`${API}?${qs}`)
+      const res = await fetch(`${API}?${qs(params)}`)
       const json = await res.json()
       if (!json.ok) throw new Error(json.error?.message || json.error?.code || '请求失败')
       return json.data
     }
 
     async function post(params, body) {
-      const qs = new URLSearchParams(params).toString()
-      const res = await fetch(`${API}?${qs}`, {
+      const res = await fetch(`${API}?${qs(params)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -45,7 +53,12 @@ window.__ModuleLoader__.load({
       { key: 'absurdity', label: '抽象', min: 0, max: 1 },
     ]
 
-    const CONF_COLOR = { 高: 'rgba(70,170,110,0.9)', 中: 'rgba(210,160,60,0.9)', 低: 'rgba(128,128,128,0.7)' }
+    const CONF_COLOR = {
+      高: 'rgba(70,170,110,0.9)',
+      中: 'rgba(210,160,60,0.9)',
+      低: 'rgba(128,128,128,0.7)',
+      人工: 'rgba(120,120,240,0.95)',
+    }
 
     const stamp = (ts) => (ts ? new Date(ts).toISOString().slice(5, 16).replace('T', ' ') : '—')
 
@@ -53,6 +66,24 @@ window.__ModuleLoader__.load({
       return h('span', {
         style: { padding: '1px 7px', borderRadius: 999, border, fontSize: 11, lineHeight: '16px', display: 'inline-block' },
       }, children)
+    }
+
+    /** 筛选按钮：显示名字 + 张数，选中时高亮 */
+    function FilterChip({ active, count, onClick, children }) {
+      const dim = count === 0 && !active
+      return h('button', {
+        type: 'button', onClick,
+        style: {
+          display: 'inline-flex', alignItems: 'baseline', gap: 5, padding: '3px 10px', borderRadius: 999,
+          cursor: 'pointer', font: 'inherit', fontSize: 12, lineHeight: '18px',
+          border: active ? '1px solid rgba(77,107,254,0.85)' : border,
+          background: active ? 'rgba(77,107,254,0.16)' : 'transparent',
+          color: 'inherit', opacity: dim ? 0.45 : 1,
+        },
+      },
+        h('span', null, children),
+        h('span', { style: { fontSize: 10, opacity: 0.6, fontFamily: mono } }, String(count)),
+      )
     }
 
     function Section({ title, children }) {
@@ -134,10 +165,11 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function Detail({ md5, onSaved }) {
+    function Detail({ md5, onSaved, characters }) {
       const [item, setItem] = useState(null)
       const [name, setName] = useState('')
       const [tags, setTags] = useState('')
+      const [char, setChar] = useState('')
       const [msg, setMsg] = useState('')
 
       useEffect(() => {
@@ -150,6 +182,7 @@ window.__ModuleLoader__.load({
             setItem(d)
             setName(d.name || '')
             setTags(d.tags || '')
+            setChar(d.character || '')
           })
           .catch((e) => alive && setMsg(e.message))
         return () => { alive = false }
@@ -157,13 +190,36 @@ window.__ModuleLoader__.load({
 
       const save = useCallback(async () => {
         try {
-          await post({ op: 'annotate' }, { md5, name, tags })
-          setMsg('已保存')
+          const body = { md5, name, tags }
+          // 只在真的改过角色时才提交它：提交 character 会连带触发「人工锁定」，
+          // 只改名字却顺手把条目的模型判断锁死，是不该发生的副作用。
+          if (char !== (item?.character || '')) body.character = char
+          const updated = await post({ op: 'annotate' }, body)
+          setItem(updated)
+          setName(updated.name || '')
+          setTags(updated.tags || '')
+          setChar(updated.character || '')
+          setMsg(updated.createdCharacter
+            ? `已保存，角色表新增了「${updated.character}」`
+            : updated.cleared
+              ? '已保存，角色已交还给模型（同时解锁）'
+              : '已保存')
           onSaved?.()
         } catch (e) {
           setMsg(e.message)
         }
-      }, [md5, name, tags, onSaved])
+      }, [md5, name, tags, char, item, onSaved])
+
+      const unlock = useCallback(async () => {
+        try {
+          const updated = await post({ op: 'annotate' }, { md5, pin: false })
+          setItem(updated)
+          setMsg('已解除锁定，下次 analyze 会重新判断这张')
+          onSaved?.()
+        } catch (e) {
+          setMsg(e.message)
+        }
+      }, [md5, onSaved])
 
       if (msg && !item) return h('div', { style: { padding: 12, fontSize: 12, opacity: 0.7 } }, msg)
       if (!item) return h('div', { style: { padding: 12, fontSize: 12, opacity: 0.7 } }, '载入中…')
@@ -198,13 +254,33 @@ window.__ModuleLoader__.load({
           placeholder: '卖萌,干饭',
           style: { padding: '6px 8px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit' },
         }),
-        h('button', {
-          type: 'button', onClick: save,
-          style: {
-            padding: '6px 10px', borderRadius: 6, border, background: 'rgba(77,107,254,0.14)',
-            color: 'inherit', font: 'inherit', cursor: 'pointer', alignSelf: 'flex-start',
-          },
-        }, '保存'),
+        h('label', { style: { fontSize: 12, opacity: 0.7 } }, '角色（留空 = 未知）'),
+        h('input', {
+          value: char, onChange: (e) => setChar(e.target.value),
+          list: 'memebrain-chars',
+          placeholder: '大肥鱼 / doro / 耄耋…',
+          style: { padding: '6px 8px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit' },
+        }),
+        h('datalist', { id: 'memebrain-chars' },
+          (characters || []).map((c) => h('option', { key: c, value: c }))),
+        h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+          h('button', {
+            type: 'button', onClick: save,
+            style: {
+              padding: '6px 10px', borderRadius: 6, border, background: 'rgba(77,107,254,0.14)',
+              color: 'inherit', font: 'inherit', cursor: 'pointer',
+            },
+          }, '保存'),
+          item.pinned
+            ? h('button', {
+              type: 'button', onClick: unlock,
+              style: { padding: '6px 10px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
+            }, '解除锁定')
+            : null,
+          item.pinned
+            ? h('span', { style: { fontSize: 11, opacity: 0.6 } }, '人工锁定中：analyze 会跳过这张')
+            : null,
+        ),
         msg ? h('div', { style: { fontSize: 12, opacity: 0.7 } }, msg) : null,
 
         Section({ title: '分析结果',
@@ -247,6 +323,14 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // 待办筛选项：key 对应 Host 的 todo 口径，name 是显示名
+    const TODO_TABS = [
+      { key: 'unanalyzed', label: '未分析' },
+      { key: 'unnamed', label: '未命名' },
+      { key: 'notags', label: '无标签' },
+      { key: 'nochar', label: '未知角色' },
+    ]
+
     function Page() {
       const [q, setQ] = useState('')
       const [draft, setDraft] = useState('')
@@ -256,11 +340,15 @@ window.__ModuleLoader__.load({
       const [limit, setLimit] = useState(60)
       const [picked, setPicked] = useState('')
       const [error, setError] = useState('')
+      const [facets, setFacets] = useState(null)
+      // 筛选状态：todo 与 character 互斥（点待办就清掉角色，反之亦然）
+      const [todo, setTodo] = useState('')
+      const [character, setCharacter] = useState('')
 
-      const load = useCallback(async (query, lim) => {
+      const load = useCallback(async (query, lim, todoKey, charKey) => {
         try {
           setError('')
-          const data = await get({ op: 'list', q: query, limit: lim })
+          const data = await get({ op: 'list', q: query, limit: lim, todo: todoKey, character: charKey })
           setItems(data.items)
           setTotal(data.total)
           setIndexed(data.indexed)
@@ -269,7 +357,19 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      useEffect(() => { load(q, limit) }, [q, limit, load])
+      const loadFacets = useCallback(async () => {
+        try {
+          setFacets(await get({ op: 'facets' }))
+        } catch (e) {
+          setError(e.message)
+        }
+      }, [])
+
+      useEffect(() => { load(q, limit, todo, character) }, [q, limit, todo, character, load])
+      useEffect(() => { loadFacets() }, [loadFacets])
+
+      const pickTodo = (key) => { setTodo((cur) => (cur === key ? '' : key)); setCharacter(''); setLimit(60) }
+      const pickCharacter = (name) => { setCharacter((cur) => (cur === name ? '' : name)); setTodo(''); setLimit(60) }
 
       return h('div', {
         style: { display: 'flex', gap: 16, padding: 16, height: '100%', minHeight: 0, boxSizing: 'border-box' },
@@ -280,7 +380,7 @@ window.__ModuleLoader__.load({
               value: draft,
               onChange: (e) => setDraft(e.target.value),
               onKeyDown: (e) => { if (e.key === 'Enter') { setLimit(60); setQ(draft.trim()) } },
-              placeholder: '搜名字 / 标签 / md5，回车执行',
+              placeholder: '搜名字 / 标签 / 外观 / md5，回车执行',
               style: { flex: 1, padding: '7px 10px', borderRadius: 8, border, background: 'transparent', color: 'inherit', font: 'inherit' },
             }),
             h('button', {
@@ -291,10 +391,42 @@ window.__ModuleLoader__.load({
             h('span', { style: { fontSize: 12, opacity: 0.6, flex: 'none' } }, `共 ${total} 张`),
           ),
 
+          facets
+            ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
+              h(FilterChip, {
+                active: !todo && !character,
+                count: facets.total,
+                onClick: () => { setTodo(''); setCharacter(''); setLimit(60) },
+              }, '全部'),
+              h('span', { style: { width: 1, height: 16, background: 'rgba(128,128,128,0.3)', margin: '0 4px' } }),
+              TODO_TABS.map((t) => h(FilterChip, {
+                key: t.key,
+                active: todo === t.key,
+                count: facets.todo?.[t.key] ?? 0,
+                onClick: () => pickTodo(t.key),
+              }, t.label)),
+              h('span', { style: { width: 1, height: 16, background: 'rgba(128,128,128,0.3)', margin: '0 4px' } }),
+              facets.characters.map((c) => h(FilterChip, {
+                key: c.name,
+                active: character === c.name,
+                count: c.count,
+                onClick: () => pickCharacter(c.name),
+              }, c.name)),
+              facets.pinned
+                ? h('span', { style: { fontSize: 11, opacity: 0.55, marginLeft: 6 } }, `人工锁定 ${facets.pinned}`)
+                : null,
+            )
+            : null,
+
           !indexed
             ? h('div', { style: { fontSize: 13, opacity: 0.7, padding: 12 } }, '还没有索引：先运行 /meme import')
             : null,
           error ? h('div', { style: { fontSize: 12, color: '#e05666' } }, error) : null,
+
+          items.length === 0 && !error && indexed
+            ? h('div', { style: { fontSize: 13, opacity: 0.6, padding: '12px 0' } },
+              todo || character ? '这个筛选下没有图了 —— 说明这一类已经清空。' : '库里还没有图。')
+            : null,
 
           h('div', {
             style: {
@@ -317,7 +449,12 @@ window.__ModuleLoader__.load({
           style: { width: 344, flex: 'none', overflowY: 'auto', borderLeft: border, paddingLeft: 16 },
         },
           picked
-            ? h(Detail, { md5: picked, onSaved: () => load(q, limit) })
+            ? h(Detail, {
+              key: picked,
+              md5: picked,
+              characters: (facets?.characters || []).map((c) => c.name),
+              onSaved: () => { load(q, limit, todo, character); loadFacets() },
+            })
             : h('div', { style: { fontSize: 12, opacity: 0.6, padding: '12px 0' } }, '点一张图看详情'),
         ),
       )

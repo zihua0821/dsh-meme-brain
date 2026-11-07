@@ -4,7 +4,8 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 
-import { openDb, queryItems, findByPrefix, updateItem } from './db.js'
+import { openDb, queryItems, findByPrefix, facets } from './db.js'
+import { annotate } from './annotate.js'
 import { INDEX_DB, absPath } from './store.js'
 
 const ROUTE = '/meme-brain/api'
@@ -142,11 +143,17 @@ function handleGet(url, res) {
       const { total, rows } = queryItems(db, {
         q: url.searchParams.get('q') || undefined,
         state: url.searchParams.get('state') || undefined,
+        character: url.searchParams.get('character') || undefined,
+        todo: url.searchParams.get('todo') || undefined,
         sort: url.searchParams.get('sort') || 'newest',
         limit: url.searchParams.get('limit') || 60,
         offset: url.searchParams.get('offset') || 0,
       })
       return sendJson(res, 200, { ok: true, data: { total, items: rows.map(publicItem), indexed: true } })
+    }
+
+    if (op === 'facets') {
+      return sendJson(res, 200, { ok: true, data: facets(db) })
     }
 
     if (op === 'item') {
@@ -169,18 +176,22 @@ async function handlePost(url, req, res) {
 
   try {
     if (op === 'annotate') {
-      const md5 = String(body.md5 || '')
-      const { row } = findByPrefix(db, md5)
-      if (!row) return sendJson(res, 404, { ok: false, error: { code: 'E_NOT_FOUND' } })
-
-      const patch = {}
-      if (typeof body.name === 'string') patch.name = body.name.trim().slice(0, 60) || null
-      if (typeof body.tags === 'string') patch.tags = body.tags.trim().slice(0, 200) || null
-      if (!Object.keys(patch).length) return sendJson(res, 400, { ok: false, error: { code: 'E_EMPTY_PATCH' } })
-
-      updateItem(db, row.md5, patch)
-      const after = findByPrefix(db, row.md5).row
-      return sendJson(res, 200, { ok: true, data: publicItem(after) })
+      const r = annotate(db, {
+        md5: String(body.md5 || ''),
+        name: body.name,
+        tags: body.tags,
+        character: body.character,
+        pin: body.pin,
+      })
+      if (!r.ok) {
+        const status = r.code === 'E_NOT_FOUND' ? 404 : 400
+        return sendJson(res, status, { ok: false, error: { code: r.code, message: r.message } })
+      }
+      const after = findByPrefix(db, r.md5).row
+      return sendJson(res, 200, {
+        ok: true,
+        data: { ...detailItem(after), createdCharacter: r.createdCharacter, cleared: r.cleared },
+      })
     }
 
     return sendJson(res, 400, { ok: false, error: { code: 'E_BAD_OP', message: `未知 op：${op}` } })

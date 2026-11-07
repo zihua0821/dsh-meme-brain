@@ -9,6 +9,7 @@ import { INDEX_DB, ROOT, LIBRARY, ensureDirs } from './lib/store.js'
 import { doctor } from './lib/doctor.js'
 import { importDirectory, rebuild, repair, backfillMeta } from './lib/pipeline.js'
 import { formatList, formatDetail, formatDupes, formatTodo } from './lib/query.js'
+import { annotate } from './lib/annotate.js'
 import { runAnalyze } from './lib/analyze.js'
 import * as characterTable from './lib/characters.js'
 
@@ -17,14 +18,18 @@ const HELP = [
   '',
   '  /meme doctor                      体检（只读）',
   '  /meme list [选项]                 列出记录',
-  '        --limit=10  --offset=0  --state=stored  --character=角色',
+  '        --limit=10  --offset=0  --state=stored  --character=角色（未知写 __none__）',
+  '        --todo=unanalyzed|unnamed|notags|nochar   按待办筛',
   '        --q=关键词（名字/标签/外观/md5）  --appearance=外观关键词  --sort=newest|size|name',
   '  /meme show <md5前缀>              查看单张全部信息',
   '  /meme dupes                       查看重复簇',
   '  /meme todo                        看待办（未分析 / 未命名 / 疑似重复）',
+  '  /meme tag <md5前缀> [--name=] [--tags=] [--character=] [--unpin]',
+  '        人工标注；填新角色会自动建进角色表；改角色会上锁',
   '  /meme analyze [--limit=10] [--force] [--rename] [--md5=前缀] [--batch=4]',
-  '        [--appearance=关键词] [--name=关键词]',
+  '        [--appearance=关键词] [--name=关键词] [--include-pinned]',
   '        --force 重跑已分析的图（不动名字）；--rename 才允许改写名字',
+  '        人工锁定的条目默认跳过；--include-pinned 才连它一起重跑',
   '  /meme char list                   看角色表',
   '  /meme char add <名字> [--look=外观] [--from=出处] [--kind=character|meme]',
   '  /meme char rm <名字>              删除角色',
@@ -223,11 +228,32 @@ function cmdList(flags) {
       q: typeof flags.q === 'string' ? flags.q : undefined,
       appearance: typeof flags.appearance === 'string' ? flags.appearance : undefined,
       character: typeof flags.character === 'string' ? flags.character : undefined,
+      todo: typeof flags.todo === 'string' ? flags.todo : undefined,
       sort: typeof flags.sort === 'string' ? flags.sort : 'newest',
       limit: flags.limit,
       offset: flags.offset,
     }),
   )
+}
+
+/** 人工标注：界面能改的，命令必须也能改（G-1） */
+function cmdTag(args, flags) {
+  const md5 = args[0]
+  if (!md5) return fail('用法：/meme tag <md5前缀> [--name=] [--tags=] [--character=] [--unpin]')
+  return withIndex((db) => {
+    const r = annotate(db, {
+      md5,
+      name: typeof flags.name === 'string' ? flags.name : undefined,
+      tags: typeof flags.tags === 'string' ? flags.tags : undefined,
+      character: typeof flags.character === 'string' ? flags.character : undefined,
+      pin: flags.unpin ? false : undefined,
+    })
+    if (!r.ok) return fail(r.message || r.code)
+    const lines = [`已保存 ${r.md5.slice(0, 8)}`]
+    if (r.createdCharacter) lines.push('（角色表里原来没有，已新建一条，出处记为 ui）')
+    if (r.cleared) lines.push('（角色已清空，交还给模型，同时解锁）')
+    return ok(lines.join('\n'))
+  })
 }
 
 function cmdShow(raw) {
@@ -257,12 +283,17 @@ async function cmdAnalyze(ctx, flags) {
       limit: flags.limit,
       force: Boolean(flags.force),
       rename: Boolean(flags.rename),
+      includePinned: Boolean(flags['include-pinned']),
       md5: typeof flags.md5 === 'string' ? flags.md5 : undefined,
       batchSize: flags.batch,
       appearance: typeof flags.appearance === 'string' ? flags.appearance : undefined,
       name: typeof flags.name === 'string' ? flags.name : undefined,
     })
     const lines = [`分析完成：成功 ${r.ok} 张，失败 ${r.failed.length} 张，补了 ${r.named} 个名字`]
+    if (r.skipped?.length) {
+      lines.push('', `跳过 ${r.skipped.length} 张（人工锁定）：`)
+      for (const s of r.skipped.slice(0, 5)) lines.push(`  ${s.md5.slice(0, 8)}  ${s.message}`)
+    }
     if (r.failed.length) {
       lines.push('', '失败明细：')
       for (const f of r.failed.slice(0, 5)) lines.push(`  ${f.md5.slice(0, 8)}  ${f.message.slice(0, 70)}`)
@@ -334,6 +365,9 @@ export async function run(rawInput, ctx) {
         return ok(cmdList(flags))
       case 'show':
         return ok(cmdShow(args[0]))
+      case 'tag':
+      case 'annotate':
+        return cmdTag(args, flags)
       case 'dupes':
         return ok(cmdDupes())
       case 'todo':

@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 let counters = new Map()
 let hookIndex = new Map()
 let hookStore = new Map()
+let memoStore = new Map()
 let queue = []
 let dirty = false
 let currentName = 'root'
@@ -22,10 +23,17 @@ const createElement = (type, props, ...children) => {
   return { type, props: p }
 }
 
-const useState = (init) => {
+const nextHookKey = (kind) => {
   const nth = hookIndex.get(currentName) || 0
   hookIndex.set(currentName, nth + 1)
-  const key = `${currentName}#${nth}`
+  return `${kind}:${currentName}#${nth}`
+}
+
+const sameDeps = (a, b) => Array.isArray(a) && Array.isArray(b)
+  && a.length === b.length && a.every((v, i) => Object.is(v, b[i]))
+
+const useState = (init) => {
+  const key = nextHookKey('state')
   if (!hookStore.has(key)) hookStore.set(key, { value: typeof init === 'function' ? init() : init })
   const cell = hookStore.get(key)
   if (!cell.set) {
@@ -40,8 +48,24 @@ const useState = (init) => {
   return [cell.value, cell.set]
 }
 
-const useEffect = (fn) => { queue.push(fn) }
-const useCallback = (fn) => fn
+// 依赖数组必须被尊重：否则详情每次重渲染都会重新拉数据，
+// 把用户刚输入还没保存的内容刷回去——真实 React 不会这样。
+const useEffect = (fn, deps) => {
+  const key = nextHookKey('effect')
+  const prev = memoStore.get(key)
+  const changed = !prev || !deps || !sameDeps(prev.deps, deps)
+  memoStore.set(key, { deps })
+  if (changed) queue.push(fn)
+}
+
+// useCallback 同样按依赖保持函数身份稳定，避免下游 effect 被无限触发
+const useCallback = (fn, deps) => {
+  const key = nextHookKey('callback')
+  const prev = memoStore.get(key)
+  if (prev && deps && sameDeps(prev.deps, deps)) return prev.fn
+  memoStore.set(key, { deps, fn })
+  return fn
+}
 
 function renderNode(node) {
   if (node === null || node === undefined || node === false || node === true) return null
@@ -94,6 +118,7 @@ async function settle(build) {
 
 const resetHooks = () => {
   hookStore = new Map()
+  memoStore = new Map()
   counters = new Map()
   hookIndex = new Map()
   queue = []
@@ -132,11 +157,26 @@ function jsonResponse(data) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, data }) })
 }
 
-globalThis.fetch = (url) => {
-  const u = String(url)
-  if (u.includes('op=item')) return jsonResponse(currentItem)
-  listCalls += 1
-  return jsonResponse({
+/** 记录每次请求，供断言「界面到底发了什么」 */
+const requests = []
+let annotateResult = null
+
+const FACETS = {
+  total: 1,
+  characters: [{ name: '大肥鱼', count: 1 }],
+  unknownCharacter: 0,
+  todo: { unanalyzed: 0, unnamed: 0, notags: 1, nochar: 0 },
+  pinned: 0,
+}
+
+// 列表响应要稳定（同一份对象）：否则每次渲染都产生「新数组」，
+// 替身的 setState 会一直判定为变化，测试就停在重渲染里出不来了。
+let cachedList = null
+let cachedFor = null
+function listData() {
+  if (cachedFor === currentItem && cachedList) return cachedList
+  cachedFor = currentItem
+  cachedList = {
     total: 1,
     indexed: true,
     items: [{
@@ -153,7 +193,20 @@ globalThis.fetch = (url) => {
       character: currentItem.character,
       analyzed: currentItem.analyzed,
     }],
-  })
+  }
+  return cachedList
+}
+
+globalThis.fetch = (url, init) => {
+  const u = String(url)
+  requests.push({ url: u, method: init?.method || 'GET', body: init?.body ? JSON.parse(init.body) : null })
+
+  if (u.includes('op=annotate')) return jsonResponse(annotateResult || currentItem)
+  if (u.includes('op=facets')) return jsonResponse(FACETS)
+  if (u.includes('op=item')) return jsonResponse(currentItem)
+
+  listCalls += 1
+  return jsonResponse(listData())
 }
 
 const fullItem = {
@@ -274,4 +327,98 @@ test('详情：未分析的条目给出可执行的下一步，而不是空白',
   assert.ok(text.includes('还没分析过'), '提示未分析')
   assert.ok(text.includes('/meme analyze --md5='), '给出可直接复制的命令')
   assert.ok(!text.includes('评分'), '没有分数时不渲染评分分区')
+})
+
+/** 筛选按钮 = 文字 + 末尾张数，例如「未知角色0」 */
+function filterChip(tree, label) {
+  return findAll(tree, (n) => {
+    if (n.props?.type !== 'button') return false
+    return new RegExp(`^${label}\\d+$`).test(textOf(n).join(''))
+  })[0]
+}
+
+async function openDetail(item) {
+  currentItem = item
+  let tree = await settle(() => createElement(Page, {}))
+  const cell = gridButton(tree)
+  assert.ok(cell, '找到图格')
+  cell.props.onClick()
+  return settle(() => createElement(Page, {}))
+}
+
+test('筛选条：待办与角色各自带张数，点击后把筛选参数带给 Host', async () => {
+  resetHooks()
+  requests.length = 0
+
+  let tree = await openDetail(fullItem)
+
+  for (const label of ['全部', '未分析', '未命名', '无标签', '未知角色', '大肥鱼']) {
+    assert.ok(filterChip(tree, label), `筛选条应有「${label}」`)
+  }
+  assert.equal(textOf(filterChip(tree, '未知角色')).join(''), '未知角色0', '待办项的计数来自 facets')
+  assert.equal(textOf(filterChip(tree, '无标签')).join(''), '无标签1')
+
+  // 点「未知角色」→ 列表请求带上 todo=nochar
+  requests.length = 0
+  filterChip(tree, '未知角色').props.onClick()
+  tree = await settle(() => createElement(Page, {}))
+  const listReq = requests.filter((r) => r.url.includes('op=list')).pop()
+  assert.ok(listReq, '触发了列表请求')
+  assert.ok(listReq.url.includes('todo=nochar'), `待办筛选应传给 Host，实际：${listReq.url}`)
+
+  // 点角色「大肥鱼」→ 带上 character，且清掉上一步的 todo
+  requests.length = 0
+  filterChip(tree, '大肥鱼').props.onClick()
+  tree = await settle(() => createElement(Page, {}))
+  const listReq2 = requests.filter((r) => r.url.includes('op=list')).pop()
+  const decoded = decodeURIComponent(listReq2.url)
+  assert.ok(decoded.includes('character=大肥鱼'), `角色筛选应传给 Host，实际：${decoded}`)
+  assert.ok(!decoded.includes('todo='), '切到角色筛选时要清掉待办筛选')
+})
+
+test('改角色：提交 character，新建角色时明确告知', async () => {
+  resetHooks()
+  annotateResult = { ...fullItem, character: '耄耋', charConf: '人工', pinned: true, createdCharacter: true, cleared: false }
+
+  let tree = await openDetail({ ...fullItem, character: '', charConf: '', pinned: false })
+
+  const input = findAll(tree, (n) => n.type === 'input' && n.props.list === 'memebrain-chars')[0]
+  assert.ok(input, '详情里有角色输入框')
+  input.props.onChange({ target: { value: '耄耋' } })
+  tree = await settle(() => createElement(Page, {}))
+
+  requests.length = 0
+  const saveBtn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '保存')[0]
+  assert.ok(saveBtn, '找到保存按钮')
+  saveBtn.props.onClick()
+  await new Promise((r) => setImmediate(r))
+  tree = await settle(() => createElement(Page, {}))
+
+  const postReq = requests.find((r) => r.method === 'POST')
+  assert.ok(postReq, '发出了 POST')
+  assert.equal(postReq.body.character, '耄耋', '提交了角色')
+  assert.ok(textOf(tree).join('').includes('角色表新增了「耄耋」'), '新建角色要告知')
+
+  // 上锁后出现解锁入口
+  assert.ok(textOf(tree).join('').includes('解除锁定'), '锁定的条目能解锁')
+})
+
+test('只改名字时不会提交 character（避免顺手把模型判断锁死）', async () => {
+  resetHooks()
+  annotateResult = { ...fullItem, name: '新名字' }
+
+  let tree = await openDetail(fullItem)
+
+  const nameInput = findAll(tree, (n) => n.type === 'input' && n.props.placeholder === '给她看的短名')[0]
+  assert.ok(nameInput, '有名字输入框')
+  nameInput.props.onChange({ target: { value: '新名字' } })
+  tree = await settle(() => createElement(Page, {}))
+
+  requests.length = 0
+  findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '保存')[0].props.onClick()
+  await new Promise((r) => setImmediate(r))
+
+  const postReq = requests.find((r) => r.method === 'POST')
+  assert.equal(postReq.body.name, '新名字')
+  assert.ok(!('character' in postReq.body), '没改角色就不该提交 character')
 })
