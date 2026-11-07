@@ -278,71 +278,41 @@ test('存表情：库里已有这张时，给了名字就应用到已有那张�
   globalThis.fetch = fetchReal
 
   assert.equal(r.ok, true, '给了名字就该当成成功（名字应用上去了）')
-  assert.match(r.message, /猫猫捂嘴/)
   const ann = fetched.find((f) => f.url.includes('op=annotate'))
   assert.ok(ann, '应该调用改名接口')
   assert.equal(ann.body.name, '猫猫捂嘴')
 })
 
-test('存表情：重复时也是静默成功（不许她把「库里有了」说出来）', async () => {
+test('存图的动作很淡：工具结果里不出现「存 / 库 / 收进」这些词', async () => {
   const { toolFactories } = await load({}, { caption: false })
-  const fetchReal = globalThis.fetch
-  globalThis.fetch = async (url, init) => {
-    const u = String(url)
-    if (u.includes('op=add')) {
-      return { ok: true, status: 200, json: async () => ({ ok: true, data: { added: false, md5: ITEMS[0].md5, near: { reason: 'byte-identical' } } }) }
-    }
-    return fetchReal(url, init)
-  }
   const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
-  const r = await made.find((t) => t.name === 'qq_save_sticker').execute({})
-  globalThis.fetch = fetchReal
-
-  assert.equal(r.ok, true, '重复也算「存过了」，不该当失败回话')
-  assert.match(r.message, /不用回话/, '工具结果要提醒她别说话')
+  const r = await made.find((t) => t.name === 'qq_save_sticker').execute({ name: '猫猫捂嘴' })
+  assert.equal(r.ok, true)
+  assert.doesNotMatch(r.message, /存|库|收进|已收好/, '工具结果越淡越好，别给她「可以汇报」的材料')
 })
 
-test('存图之后这一轮静默：文字全去掉，只回一张表情', async () => {
-  const { toolFactories, handlers, sent } = await load({}, { caption: true })
-  // 先真存一张（op=add 默认回 added:true）
+test('存图和回应是两条独立的路：存完之后她的回复不被改写', async () => {
+  const { toolFactories, handlers } = await load({}, { caption: true })
   const made = toolFactories[0]({ chat: { chatId: 'private:9', kind: 'private' } })
   const save = await made.find((t) => t.name === 'qq_save_sticker').execute({ name: '猫猫捂嘴' })
   assert.equal(save.ok, true)
 
-  const out = handlers['reply/items'](
-    [{ kind: 'text', value: '诶 库里已经有了 那不用存' }],
-    { chatId: 'private:9', userText: '存一下这个' },
-  )
-  assert.ok(Array.isArray(out), '应该改写这条回复')
-  assert.deepEqual(out.map((i) => i.kind), ['image'], '文字去掉，只留一张表情')
-  assert.ok(out[0].value.includes('library'), '回的是库里的图')
+  // 她这一轮想说话 —— 那就说话，不该被塞成表情
+  const out = handlers['reply/items']([{ kind: 'text', value: '这猫伸手够东西的样子 好像我够白饭' }], { chatId: 'private:9', userText: '存一下' })
+  assert.equal(out, undefined, '存图不该改写她的回复')
 
-  // 别的聊天不受影响
-  assert.equal(handlers['reply/items']([{ kind: 'text', value: '在' }], { chatId: 'group:1' }), undefined)
-
-  // 只用一次
-  assert.equal(handlers['reply/items']([{ kind: 'text', value: '嗯' }], { chatId: 'private:9' }), undefined)
-  assert.equal(sent.length, 0, '静默回复不该走工具发送路径')
+  // 她这一轮想甩个表情 —— 也照常
+  const withSticker = handlers['reply/items']([{ kind: 'sticker', value: '开心炫饭' }], { chatId: 'private:9' })
+  assert.deepEqual(withSticker.map((i) => i.kind), ['image'], '她写的表情照常被换成本库的图')
 })
 
-test('主人发图被自动收集：这一轮同样静默（只回表情，不解释）', async () => {
+test('主人发图被自动收集：同样不影响她怎么回', async () => {
   const { handlers } = await load({}, { caption: false })
-  // 主人（ownerQQ='1'）发一张表情 → 自动收集成功
   handlers.message({ kind: 'private', chatId: 'private:1', userId: '1', stickers: [{ type: 'image', data: { file: 'own.jpg', sub_type: 1 } }], images: [] })
   await new Promise((r) => setTimeout(r, 120))
 
   const out = handlers['reply/items']([{ kind: 'text', value: '这猫伸手够东西的样子 好像我够白饭' }], { chatId: 'private:1', userText: '存一下' })
-  assert.ok(Array.isArray(out), '应该改写回复')
-  assert.deepEqual(out.map((i) => i.kind), ['image'], '文字去掉，只留一张表情')
-})
-
-test('群里别人发图：不置静默信号（她的正经回复照常发）', async () => {
-  const { handlers } = await load({}, { caption: false })
-  handlers.message({ kind: 'group', chatId: 'group:1', userId: '999', stickers: [{ type: 'image', data: { file: 'other.jpg', sub_type: 1 } }], images: [] })
-  await new Promise((r) => setTimeout(r, 120))
-
-  const out = handlers['reply/items']([{ kind: 'text', value: '在' }], { chatId: 'group:1' })
-  assert.equal(out, undefined, '别人发的表情不影响她的回复')
+  assert.equal(out, undefined, '自动收集也不该干扰她的回复')
 })
 
 test('find 走 op=find，参数名和 Host 对得上', async () => {

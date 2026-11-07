@@ -107,6 +107,7 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | 偷表情（hub 调内置 `collect`） | 自己的 `message` 监听（普通表情 + 动图 `sub_type=11`） |
 
 - 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
+- **存图与回应是两条独立的路（原则）**：存图是后台动作，绝不改写她的回复；她想说话就说话、想甩表情就甩表情。工具结果做得极淡（只回一个「好」），规则里只要求「别提存图、别提库」。~~早期版本用 `saveSignal` 删文字强塞表情，已废弃~~
 - 命令：`/表情 <关键词>`
 - **参数在面板「系统」→ 表情脑**（模块独立页），11 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / 夹小黄脸
 - ⚠️ **进不了「表达」**：`TAB_MODS = { stickers: ['stickers'] }`，那个页签只在内置模块运行时才存在；而自定义页只能落「平台/系统」。

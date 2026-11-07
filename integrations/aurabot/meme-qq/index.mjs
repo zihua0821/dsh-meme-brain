@@ -285,11 +285,6 @@ export default {
     let lastToolSend = { chatId: '', at: 0, md5: '', name: '' }
     const TOOL_SEND_WINDOW = 20_000
 
-    // 刚存过图 → 这一轮回复静默：去掉文字，只回一个表情（用户明确要求：存图不要任何回应）
-    // 两个来源都会置这个信号：① 工具存图（她或主人主动存）② 主人发的图被自动收集
-    let saveSignal = { chatId: '', at: 0 }
-    const SAVE_SILENT_WINDOW = 15_000
-
     const textOf = (list) => list.filter((x) => x && x.kind === 'text').map((x) => String(x.value || '')).join(' ')
 
     api.on('reply/items', (items, info = {}) => {
@@ -298,21 +293,6 @@ export default {
       const inGroup = chatId.startsWith('group:')
       let out = items.slice()
       let touched = false
-
-      // 0) 这一轮刚存过图 → 全程静默：不许出现「存好了 / 库里有了」这类话，只回一张表情
-      if (saveSignal.at && chatId === saveSignal.chatId && Date.now() - saveSignal.at < SAVE_SILENT_WINDOW) {
-        saveSignal = { chatId: '', at: 0 }
-        const keep = out.filter((it) => it && it.kind !== 'text' && it.kind !== 'sticker')
-        const pick = pickForReply(`${textOf(out)} ${String(info.userText || '')}`)
-        const abs = pick ? sendablePath(pick) : ''
-        if (!abs) {
-          // 库里没有能发的图：退化成「什么都不发」，也不许她把存图的话说出来
-          return keep.length ? keep : undefined
-        }
-        keep.push({ kind: 'image', value: abs })
-        log.debug('存图后的这一轮只回表情（不解释存图）')
-        return keep
-      }
 
       // 1) 「发表情」总开关关着：她写的表情不解析，也不自动配
       if (!stickersOn()) {
@@ -503,12 +483,10 @@ export default {
       const name = String(opts.name || '').trim().slice(0, 12)
       const tags = Array.isArray(opts.tags) ? opts.tags.filter(Boolean).slice(0, 3) : []
       const r = await addFromBuffer(buf, { name, tags, from: opts.from || 'tool' })
-      const chatId = String(opts.chatId || '')
 
-      if (r.ok) {
-        if (chatId) saveSignal = { chatId, at: Date.now() }
-        return { ok: true, md5: r.md5, message: '（已收好，不用回话）' }
-      }
+      // 结果故意做得很淡：存图是后台动作，不该成为她的话题。
+      // 但也绝不改写她的回复——「存图」和「怎么回」是两条独立的路。
+      if (r.ok) return { ok: true, md5: r.md5, message: '好' }
       if (!r.existed) return { ok: false, message: r.reason || '没存成' }
 
       const hit = r.md5 ? items().find((it) => it.md5 === r.md5) : null
@@ -522,15 +500,13 @@ export default {
             ...(tags.length ? { tags: tags.join(',') } : {}),
           })
           refresh().catch(() => {})
-          if (chatId) saveSignal = { chatId, at: Date.now() }
-          return { ok: true, md5: r.md5, message: name ? `（名字改成「${name}」了，不用回话）` : '（标签更新了，不用回话）' }
+          return { ok: true, md5: r.md5, message: '好' }
         } catch (error) {
           log.debug('重复时改名失败：', error.message)
         }
       }
-      // 重复且没改名：也是「存图行为」，照样静默
-      if (chatId) saveSignal = { chatId, at: Date.now() }
-      return { ok: true, md5: r.md5, message: `（库里本来就有这张${shown}，不用回话）` }
+      // 本来就在库里：对她来说等于「已经办好了」，同样只回一个中性的字
+      return { ok: true, md5: r.md5, message: shown ? `好（这张叫${shown}）` : '好' }
     }
 
     let capturing = Promise.resolve()
@@ -584,18 +560,8 @@ export default {
         segs.push(seg)
       }
 
-      let stored = 0
-      for (const seg of segs) {
-        const ok = await serialize(() => captureOne(seg))
-        if (ok) stored += 1
-      }
-
-      // 主人自己发的图被存了 → 这一轮当作「存图」，回复静默、只回一个表情。
-      // 别人发的表情不置信号（否则群友一发表情，她下一句正经回复也会被换成表情）。
-      if (stored && fromOwner) {
-        saveSignal = { chatId: msg.chatId, at: Date.now() }
-        log.debug(`主人发来 ${stored} 张已入库：这一轮只回表情`)
-      }
+      // 存图纯粹是后台动作：不受这一轮回复影响，也不影响这一轮回复。
+      for (const seg of segs) await serialize(() => captureOne(seg))
     }
 
     api.on('message', (msg) => {
@@ -846,7 +812,7 @@ export default {
 
     // ---------- 让她知道 ----------
 
-    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。库里没有的就直说没有，不要编。\n存表情是你自己的小习惯，不用说出来：不要说「存好了」「收到了」「库里有了」，也不要提「库」这个字；别人发图或让你存，你就像平时互相发表情那样，回一个表情就行。')
+    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。库里没有的就直说没有，不要编。\n存表情是顺手做的事，跟聊天是两件互不相干的事：不用提存图、不用说「存好了」、「记下了」，也不要提「库」这个字。别人发表情时，你照平时的习惯回——想说话就说话，想甩个表情就发个表情，别为了「回应他发表情」硬塞。')
 
     api.command({
       name: '表情',
