@@ -51,36 +51,87 @@ const looksAnimated = (seg) => {
 
 const subTypeOf = (seg) => String(((seg && seg.data) || {}).sub_type ?? ((seg && seg.data) || {}).subType ?? '')
 
+/** 参数表：`defaults` 与「清理未知键」共用这一份，避免两边写重 */
+const DEFAULTS = {
+  enabled: true,          // 发表情总开关
+  autoChance: 0.35,       // 自动配表情概率（0 = 关）
+  collect: true,          // 收表情
+  fromGroups: true,       // 从群里收
+  fromPrivate: true,      // 从私聊收
+  collectMode: 'auto',    // auto 全都收 / owner 只听主人的 / ask 她挑
+  maxPerHour: 20,         // 每小时最多收
+  caption: true,          // 看图起名（唯一花钱的开关）
+  maxMB: 8,               // 收取单张上限
+  maxSendMB: 5,           // 发送单张上限
+  faces: true,            // 夹 QQ 小黄脸（不是本库的功能，但面板页挪走后只有这里能改）
+}
+
 export default {
   id: 'meme-qq',
   name: '表情包（新库）',
-  version: '2.0.0',
+  version: '3.0.0',
   api: 1,
-  description: '独立的表情模块：用 ~/.dsh/meme-brain 的统一库发图、找图、收表情。内置表情模块保持原样，只是被停用（随时可以切回去）。',
-  tab: 'stickers',
-  defaults: {
-    autoPick: true,      // 自动配表情总开关（概率和内置共用 config.stickers.autoChance）
-    ownerImages: false,  // 主人发的普通图片也当表情收（内置没有这个）
-    maxMB: 8,            // 收取单张上限（内置没有这个）
-    maxSendMB: 5,        // 发送单张上限（内置没有这个）
-  },
+  description: '统一表情库：发表情、找图、收表情都在这里。参数只此一处，内置表情模块保持停用。',
+  // 故意不写 tab：参数放进「扩展」里本模块自己的页，
+  // 不依赖内置那个「表情包」页（它随内置模块停用而残破）
+  defaults: DEFAULTS,
   settings: [
-    { key: 'autoPick', label: '自动配表情', type: 'switch', hint: '关掉就只在她自己写 <sticker:…> 时发。概率用「表情包」页里那个「自动配表情的概率」' },
-    { key: 'ownerImages', label: '主人发的图片也收', type: 'switch', hint: '默认关。只收够小、接近方形的' },
-    { key: 'maxMB', label: '收取单张上限（MB）', type: 'number', min: 1, max: 32, step: 1, hint: '内置卡 1.5MB，导致大动图永远收不进来；这里放宽' },
-    { key: 'maxSendMB', label: '发送单张上限（MB）', type: 'number', min: 1, max: 16, step: 1, hint: '内置没有这道闸门。库里 269/275 张在 5MB 内，超过的发出去会被网关拒' },
+    { key: 'enabled', label: '发表情', type: 'switch', hint: '关掉她就不发表情（也不解析回复里的 <sticker:…>），但收表情不受影响' },
+    { key: 'autoChance', label: '自动配表情的概率', type: 'number', min: 0, max: 1, step: 0.05, hint: '0.35 = 三成多会自己补一张；填 0 = 完全不用自动配' },
+    { key: 'collect', label: '收表情', type: 'switch', hint: '别人发的表情包会被收进库（普通照片不收）' },
+    { key: 'fromGroups', label: '　从群里收', type: 'switch', hint: '关掉就不在群里收' },
+    { key: 'fromPrivate', label: '　从私聊收', type: 'switch', hint: '关掉就不在私聊收' },
+    { key: 'collectMode', label: '怎么收', type: 'select', options: [
+      { value: 'auto', label: '全都收' },
+      { value: 'owner', label: '只听主人的' },
+      { value: 'ask', label: '她挑' },
+    ], hint: '她挑：先记着、提示她「第几张不错」，她喜欢才凭编号收' },
+    { key: 'maxPerHour', label: '每小时最多收', type: 'number', min: 0, max: 200, step: 1, hint: '0 = 不限' },
+    { key: 'caption', label: '看图起名', type: 'switch', hint: '收下后调一次视觉模型起名打分。关掉就只按 md5 存着，之后在界面里补' },
+    { key: 'maxMB', label: '收取单张上限（MB）', type: 'number', min: 1, max: 32, step: 1, hint: '内置卡 1.5MB，大动图永远收不进来；这里放宽' },
+    { key: 'maxSendMB', label: '发送单张上限（MB）', type: 'number', min: 1, max: 16, step: 1, hint: '超过就不发（发出去会被网关拒）。库里 269/275 张在 5MB 内' },
+    { key: 'faces', label: '夹 QQ 小黄脸', type: 'switch', hint: '回复里能夹 /捂脸 /斜眼笑 这种系统表情。这是插件本来的功能，不属于表情库，但归到这里统一管' },
   ],
 
   setup(api) {
     const log = api.log
     const hub = api.core.hub
-    const settings = () => api.settings()
     /**
-     * 参数唯一来源：面板「表情包」页写的 config.stickers。
-     * 内置模块停用了，但这些参数还在、还能改，所以必须认它们——不要自己再造一套同义开关。
+     * 参数唯一来源：本模块的设置（面板「扩展」→ 表情包（新库））。
+     * 内置那套 config.stickers 不再作为来源——它只被镜像成「旧库路径全关」，
+     * 免得 hub 那边的内置逻辑（发表情、自动配、提示收图）插一脚。
      */
-    const stickerCfg = () => api.config().stickers || {}
-    const stickersOn = () => stickerCfg().enabled !== false
+    const settings = () => api.settings()
+    const stickersOn = () => settings().enabled !== false
+
+    /**
+     * 把本模块的设置镜像进 config.stickers 里 hub 还认的那几个字段。
+     * 为什么要镜像：hub 不看模块设置，只看 config；「她挑」模式的轻提示、以及
+     * 夹小黄脸，都还在 hub 手里。不镜像就会两边判断不一致。
+     * enabled 恒为 false：内置模块没在跑，hub 的旧库发表情/自动配路径必须保持关闭。
+     */
+    function mirrorToCoreConfig() {
+      try {
+        const s = settings()
+        const cfg = api.config()
+        const cur = cfg.stickers || {}
+        const next = {
+          ...cur,
+          enabled: false, // 旧库路径一律关掉（双保险，内置模块本来就没跑）
+          faces: s.faces !== false,
+          collect: s.collect !== false,
+          collectMode: s.collectMode || 'auto',
+          fromGroups: s.fromGroups !== false,
+          fromPrivate: s.fromPrivate !== false,
+        }
+        if (JSON.stringify(cur) !== JSON.stringify(next)) {
+          api.setConfig({ ...cfg, stickers: next })
+          log.debug('已把表情设置镜像到 config.stickers')
+        }
+      } catch (error) {
+        log.warn('镜像表情设置失败（hub 那边的提示可能与设置不一致）：', error.message)
+      }
+    }
 
     // ---------- 找 DSH 里的表情库 ----------
 
@@ -233,12 +284,11 @@ export default {
       if (!Array.isArray(items) || !items.length) return undefined
       const chatId = String(info.chatId || '')
       const inGroup = chatId.startsWith('group:')
-      const cfg = stickerCfg()
       let out = items.slice()
       let touched = false
 
-      // 0) 「表情包」总开关关着：她写的表情不解析，也不自动配（面板关掉就该完全不发）
-      if (cfg.enabled === false) {
+      // 0) 「发表情」总开关关着：她写的表情不解析，也不自动配
+      if (!stickersOn()) {
         const stripped = out.filter((it) => !it || it.kind !== 'sticker')
         return stripped.length === out.length ? undefined : stripped
       }
@@ -273,10 +323,10 @@ export default {
         return touched ? out : undefined
       }
 
-      // 2) 自动配一张（替代内置的 autoChance 那一步，概率读面板里的值）
-      if (settings().autoPick) {
+      // 2) 自动配一张（概率用本模块的设置，0 = 关）
+      const chance = Number(settings().autoChance ?? 0.35)
+      if (chance > 0) {
         const hasPic = out.some((it) => it && (it.kind === 'image' || it.kind === 'sticker'))
-        const chance = Number(cfg.autoChance ?? 0.35)
         const tooMany = inGroup && out.length >= 2
         if (!hasPic && !tooMany && Math.random() < chance) {
           const pick = pickForReply(textOf(out))
@@ -295,8 +345,7 @@ export default {
 
     const recent = []
     function underQuota() {
-      // 配额读面板里的「每小时最多收」，不另设开关
-      const n = Math.max(0, Number(stickerCfg().maxPerHour ?? 20) || 0)
+      const n = Math.max(0, Number(settings().maxPerHour ?? 20) || 0)
       if (!n) return true
       const now = Date.now()
       while (recent.length && now - recent[0] > 3600_000) recent.shift()
@@ -370,8 +419,8 @@ export default {
       }
       recent.push(Date.now())
       log.info(`表情入库 ${r.md5.slice(0, 8)}（${Math.round(buf.length / 1024)}KB）`)
-      // 「看图起名」：面板里那个 caption 开关（内置也用它），不另设开关
-      if (stickerCfg().caption !== false) {
+      // 「看图起名」：本模块的设置（唯一花钱的开关）
+      if (settings().caption !== false) {
         analyzeRemote(r.md5)
           .then((d) => log.info(`起名「${d.item?.name || '?'}」`))
           .catch((error) => log.debug('自动起名失败（图已入库）：', error.message))
@@ -429,7 +478,7 @@ export default {
       return next
     }
 
-    async function captureOne(seg, msg) {
+    async function captureOne(seg) {
       if (!underQuota()) return
       let buf
       try {
@@ -438,25 +487,24 @@ export default {
         log.debug('收表情下载失败：', error.message)
         return
       }
-      // 静态字节：本来就是表情段的收；普通图片要开 ownerImages 且够小
+      // 只收「本来就是表情」的段：动图（多帧）或者 QQ 标成表情的（sub_type 1/7/11、md5 文件名）。
+      // 普通照片不收——那是另一个决定，不该藏在这里。
       const animated = Boolean(animatedKind(buf))
       const stickerish = subTypeOf(seg) === '1' || subTypeOf(seg) === '7' || subTypeOf(seg) === '11'
         || /^[0-9a-f]{32}\./i.test(String(seg?.data?.file || ''))
-      if (!animated && !stickerish) {
-        if (!(settings().ownerImages && buf.length <= 1.5 * MB)) return
-      }
+      if (!animated && !stickerish) return
       await ingest(buf, 'qq')
     }
 
     async function capture(msg) {
-      const cfg = stickerCfg()
-      if (!cfg.collect) return
-      // 从群里 / 从私聊：面板里能分别关
-      if (msg.kind === 'group' && cfg.fromGroups === false) return
-      if (msg.kind !== 'group' && cfg.fromPrivate === false) return
+      const s = settings()
+      if (s.collect === false) return
+      // 从群里 / 从私聊：分别能关
+      if (msg.kind === 'group' && s.fromGroups === false) return
+      if (msg.kind !== 'group' && s.fromPrivate === false) return
 
       const ownerQQ = String(api.config().ownerQQ || '')
-      const mode = String(cfg.collectMode || 'auto')
+      const mode = String(s.collectMode || 'auto')
       // 「她挑」：不自动收，先记着，她用 qq_collect_sticker 按编号收
       if (mode === 'ask') return
       // 「只听主人的」：只有主人发的时候才自动收
@@ -471,7 +519,7 @@ export default {
         seen.add(k)
         segs.push(seg)
       }
-      for (const seg of segs) await serialize(() => captureOne(seg, msg))
+      for (const seg of segs) await serialize(() => captureOne(seg))
     }
 
     api.on('message', (msg) => {
@@ -658,18 +706,69 @@ export default {
         const retired = []
         for (const id of ['stickers', 'gif-stickers']) {
           const cur = next[id] || {}
-          if (cur.enabled === false) continue
-          next[id] = { ...cur, enabled: false }
+          // 已经是干净的 { enabled: false } 就别再写；否则重建一次，
+          // 顺手清掉 v1 冒充内置时留下的 forkedFrom / useBuiltin
+          if (cur.enabled === false && Object.keys(cur).length === 1) continue
+          next[id] = { enabled: false }
           retired.push(id)
         }
         if (!retired.length) return
-        api.setConfig({ ...api.config(), modules: next })
+        // 函数形式 = 整份替换；用深合并的话被删掉的 forkedFrom 会留下来
+        api.setConfig((whole) => ({ ...whole, modules: next }))
         log.info(`已停用：${retired.join('、')}（代码原样保留，随时可以在「扩展」页重新打开）`)
       } catch (error) {
         log.warn('停用内置表情模块失败（会和本模块同时工作，注意重复）：', error.message)
       }
     }
     retireOldModules()
+    migrateLegacySettings()
+    mirrorToCoreConfig()
+
+    /**
+     * 迁一次旧设置 + 清掉已不存在的键。
+     *
+     * 两个坑：
+     *   1. `api.setConfig(patch)` 是**深合并**，删键删不掉；要删必须用函数形式（整份替换）。
+     *   2. `api.settings()` 是「默认值 + 存下来的值」合并，旧版留下的键会一直压在新默认值上，
+     *      表现为「改了默认值却不生效」，而且面板里根本看不见它。
+     *
+     * 旧版的键（autoPick/autoAnalyze/ownerImages…）在，说明这份设置是 v1/v2 留下的：
+     * 当时那几个参数还是在内置「表情包」页里设的，先把用户设过的值搬过来再清理。
+     */
+    function migrateLegacySettings() {
+      try {
+        const cfg = api.config()
+        const cur = { ...(cfg.ext?.['meme-qq'] || {}) }
+        const legacy = 'autoPick' in cur || 'autoAnalyze' in cur || 'ownerImages' in cur
+        let changed = false
+
+        if (legacy) {
+          const src = cfg.stickers || {}
+          for (const k of ['autoChance', 'maxPerHour', 'caption', 'faces', 'collect', 'collectMode', 'fromGroups', 'fromPrivate']) {
+            if (src[k] !== undefined && cur[k] !== src[k]) {
+              cur[k] = src[k]
+              changed = true
+            }
+          }
+          log.info('检测到旧版设置，已把当时在内置面板里设过的值搬过来')
+        }
+
+        const stale = Object.keys(cur).filter((k) => !(k in DEFAULTS))
+        for (const k of stale) delete cur[k]
+        if (stale.length) {
+          changed = true
+          log.info(`清掉旧版遗留设置：${stale.join('、')}`)
+        }
+        if (!changed) return
+
+        // 函数形式 = 整份替换，删除才算数
+        api.setConfig((whole) => ({ ...whole, ext: { ...whole.ext, 'meme-qq': cur } }))
+      } catch (error) {
+        log.debug('迁移旧设置失败（不影响运行）：', error.message)
+      }
+    }
+    // 面板里改完设置（保存）时重新镜像一次，免得 hub 那边的提示和设置不同步
+    api.on('config', () => mirrorToCoreConfig())
 
     // ---------- 让她知道 ----------
 
@@ -694,7 +793,7 @@ export default {
       },
     })
 
-    log.info('表情包（新库）已就绪（独立模块，内置 stickers 已停用）')
+    log.info('表情包（新库）已就绪（参数在本模块设置里，内置表情模块已停用）')
 
     return { refresh, find, status: statusRemote, addFromBuffer, rename }
   },

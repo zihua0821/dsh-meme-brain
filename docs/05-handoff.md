@@ -108,11 +108,13 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 
 - 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
 - 命令：`/表情 <关键词>`
-- **参数一律认 `config.stickers`**（面板「表情包」页，内置停用后仍然有效）：`enabled` / `autoChance` / `collect` / `fromGroups` / `fromPrivate` / `collectMode` / `maxPerHour` / `caption`。`maxLibrary` 故意不实现（自动删图是数据损失）。
-- 自己只新增 4 个设置：`autoPick`、`ownerImages`、`maxMB`（收取上限，内置卡 1.5MB）、`maxSendMB`（发送上限，内置没有）
+- **参数在模块自己的设置页**（面板「扩展」→ 表情包（新库），不挂在「表情包」页签下），11 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / 夹小黄脸
+- **镜像**：`config.stickers` 里 hub 还认的字段（`enabled` 恒 false、`faces`、`collect`、`collectMode`、`fromGroups`、`fromPrivate`）由模块写过去，否则 hub 的提示会和设置不同步
+- 不做：`maxLibrary`（自动删图 = 数据损失）
+- **踩坑**：`api.setConfig(patch)` 是深合并，**删键必须用函数形式**（整份替换），否则删不掉
 - 数据全走 HTTP（`op=list` / `op=find` / `op=add` / `op=analyze` / `op=annotate`）
 - 模块读 `DSH_MEME_BRAIN_ROOT` 环境变量（和主项目一致），测试里用它指向临时目录
-- **已知残缺**：内置注册的 `/ext/stickers/...` 接口随模块停用而失效 → Aurabot 面板「表情库」卡片显示空；管库请用 DSH 侧栏「表情包」界面
+- **已知残缺**：内置注册的 `/ext/stickers/...` 接口随模块停用而失效 → Aurabot 面板「表情库」卡片显示空；管库请用 DSH 侧栏「表情包」界面（已决定不处理）
 
 **判重只有一份**：`src/lib/pipeline.js` 的 `ingestBuffer()`，目录导入和 `op=add` 共用。
 **回退**：`modules.stickers.enabled = true` + `modules['meme-qq'].enabled = false`。

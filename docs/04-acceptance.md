@@ -754,34 +754,36 @@ GET  /meme-brain/api?op=find&q=&character=&emotion=&limit=
 
 ### 参数怎么对应（重要）
 
-内置模块**没有自己的设置表单**，它的参数全在 `config.stickers`（面板「登录/表情包」页那几张卡），而且**模块停用后这些参数仍然有效**（面板页是静态的，hub 也还在读）。所以 `meme-qq` 一律认它们，只新造了 4 个内置没有的：
+内置模块**没有自己的设置表单**，参数原来全在 `config.stickers`（面板「表情包」页）。那个页随内置模块停用而残破，所以现在**参数搬到 `meme-qq` 自己的设置页**（面板「扩展」→ 表情包（新库））。
 
-| 面板上的参数 | 谁在用 | `meme-qq` 的行为 |
+一份真相 + 一处镜像：
+
+- **真相** = `ext['meme-qq']`（本模块设置，11 项）
+- **镜像** = `config.stickers` 里 hub 还认的几个字段（`enabled` 恒 false、`faces`、`collect`、`collectMode`、`fromGroups`、`fromPrivate`）。hub 不看模块设置，不镜像就会出现「设置关了、hub 仍给她轻提示」这种不一致
+
+| 参数 | 默认 | 说明 |
 |---|---|---|
-| 表情包（总开关）`enabled` | hub + 本模块 | 关掉就完全不发：不解析 `<sticker:>`，不自动配，工具也拒绝 |
-| 自动配表情的概率 `autoChance` | 本模块 | 直接用它 |
-| 夹 QQ 小黄脸 `faces` | hub | 与本模块无关，照常有效 |
-| 偷表情 `collect` | 本模块 | 关掉就完全不收 |
-| 从群里 / 从私聊 `fromGroups` `fromPrivate` | 本模块 | 分别生效 |
-| 怎么偷 `collectMode` | 本模块 | `auto` 全收；`ask` 不自动收（她按编号挑）；`owner` 只收主人发的 |
-| 每小时最多收 `maxPerHour` | 本模块 | 用它 |
-| 表情库最多存 `maxLibrary` | — | **故意不实现**：自动删图是数据损失，新库不淘汰（想要容量管理我们另做） |
-| 看图起名 `caption` | 本模块 | 关掉就只入库、不起名 |
+| 发表情 `enabled` | 开 | 关掉不发表情、不解析 `<sticker:>`（收表情不受影响） |
+| 自动配表情概率 `autoChance` | 0.35 | 0 = 完全不自动配 |
+| 收表情 `collect` | 开 | |
+| 从群里 / 从私聊 `fromGroups` `fromPrivate` | 都开 | |
+| 怎么收 `collectMode` | 全都收 | `auto` 全收 / `owner` 只听主人的 / `ask` 她挑（hub 记着+提示，她用 `qq_collect_sticker` 收） |
+| 每小时最多收 `maxPerHour` | 20 | 0 = 不限 |
+| 看图起名 `caption` | 开 | 唯一花钱的开关 |
+| 收取上限 `maxMB` | 8 | 内置卡 1.5MB，大动图收不进来 |
+| 发送上限 `maxSendMB` | 5 | 超了不发（会被网关拒），269/275 张在 5MB 内 |
+| 夹 QQ 小黄脸 `faces` | 开 | 不是本库功能，但面板页挪走后只有这里能改 |
 
-`meme-qq` 自己新增的 4 个设置（面板「表情包」页底部）：
+**删掉的**：`maxLibrary`（自动删最少用的图 = 数据损失，新库不做淘汰）、v1/v2 自造的 `autoPick`/`ownerImages`（前者等于 `autoChance=0`，后者用「存一下这个表情」手动存）。
 
-| 设置 | 默认 | 为什么需要 |
-|---|---|---|
-| `autoPick` | 开 | 单独关掉「自动配表情」，但保留 `<sticker:>` |
-| `ownerImages` | 关 | 主人发的普通图片是否也当表情收（内置没有） |
-| `maxMB` | 8 | 收取上限。内置卡 1.5MB，大动图永远收不进来 |
-| `maxSendMB` | 5 | 发送上限。内置没有这道闸门，超了会被网关拒 |
+**旧设置会自动迁过来**：模块启动时若发现 v1/v2 的遗留键（`autoPick`/`autoAnalyze`/`ownerImages`），先把当初在内置面板里设过的值（`autoChance`/`maxPerHour`/`caption`/`faces`/`collect`/`collectMode`/`fromGroups`/`fromPrivate`）搬进来，再删掉遗留键。
+⚠️ `api.setConfig(patch)` 是**深合并**，删键必须用函数形式（整份替换）——这里踩过两次。
 
 ### 一个已知的界面残缺
 
 内置模块注册的接口（`/ext/stickers/stickers`、`/sticker/upload`、`/sticker/import-qq`、改名/删除）在它停用后全部 404，所以**Aurabot 面板「表情包」页下面那张「表情库」卡片会显示空/失败**。接口路径按模块 id 分组，`meme-qq` 没法冒名接住。
 
-替代办法：**用 DSH 侧栏「表情包」界面管库**（筛选、改名字/标签/角色、单张分析都在那儿），它管的是同一个库。
+替代办法：**用 DSH 侧栏「表情包」界面管库**（筛选、改名字/标签/角色、单张分析都在那儿），它管的是同一个库。**已决定不处理这张卡片。**
 
 **② 怎么验**
 
