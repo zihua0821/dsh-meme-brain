@@ -68,13 +68,14 @@ const DEFAULTS = {
 
 export default {
   id: 'meme-qq',
-  name: '统一表情库',
-  version: '3.1.0',
+  name: '表情脑',
+  version: '3.2.0',
   api: 1,
-  description: '她唯一的表情库：发表情、找图、收表情都走这里。参数在本页底部，内置表情模块保持停用。',
-  // 面板的分组是写死的：模块自己的页默认落「系统」；挂在内置页签下才会跟着页签走。
-  // 「表情包」页签在「表达」下，所以挂上去——参数就出现在「表达 → 表情包」底部。
-  tab: 'stickers',
+  description: 'dsh-meme-brain 插件里的表情库在 QQ 这边的出口：发表情、找图、收表情都走这里。参数在本页，内置表情模块保持停用。',
+  // 为什么不用 tab：面板写死了「表情包」页签只在内置 stickers 模块运行时才出现
+  // （TAB_MODS = { stickers: ['stickers'] }），内置一停那一页就没了。
+  // 自定义模块页只能在「系统」组（navGroupOf 对自定义页只有 平台/系统 两个去处）。
+  // 结论：内置关着的前提下，参数页进不了「表达」。独立页最稳。
   defaults: DEFAULTS,
   settings: [
     { key: 'enabled', label: '发表情', type: 'switch', hint: '关掉她就不发表情（也不解析回复里的 <sticker:…>），但收表情不受影响' },
@@ -799,7 +800,7 @@ export default {
       },
     })
 
-    log.info('统一表情库已就绪（参数在本页底部，内置表情模块已停用）')
+    log.info('表情脑已就绪（参数在本页，内置表情模块已停用）')
 
     return { refresh, find, status: statusRemote, addFromBuffer, rename }
   },

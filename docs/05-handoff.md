@@ -94,7 +94,7 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 
 ### Aurabot 模块（M7-b / M8，已在跑）
 
-`integrations/aurabot/meme-qq/index.mjs` → 部署到 `modules/meme-qq/index.mjs`。正式名字 **统一表情库**。
+`integrations/aurabot/meme-qq/index.mjs` → 部署到 `modules/meme-qq/index.mjs`。正式名字 **表情脑**。
 **独立模块**：id 是 `meme-qq`，不冒充内置。内置 `stickers` 模块**代码原样保留、只在配置里停用**
 （`modules.stickers.enabled = false`，想退回把它改 true 并关掉 meme-qq）。
 
@@ -108,8 +108,8 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 
 - 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
 - 命令：`/表情 <关键词>`
-- **参数在「表达 → 表情包」页底部**（模块挂在 `stickers` 页签下；面板分组写死，模块自己的页会落「系统」），11 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / 夹小黄脸
-- ⚠️ 该页上方还留着内置的旧卡片：**上面的开关改不动**（会被镜像覆盖），下面「表情库」卡片会一直「加载中…」
+- **参数在面板「系统」→ 表情脑**（模块独立页），11 项：发表情 / 自动配概率 / 收表情 / 从群里 / 从私聊 / 怎么收（三者）/ 每小时上限 / 看图起名 / 收取上限 / 发送上限 / 夹小黄脸
+- ⚠️ **进不了「表达」**：`TAB_MODS = { stickers: ['stickers'] }`，那个页签只在内置模块运行时才存在；而自定义页只能落「平台/系统」。
 - **镜像**：`config.stickers` 里 hub 还认的字段（`enabled` 恒 false、`faces`、`collect`、`collectMode`、`fromGroups`、`fromPrivate`）由模块写过去，否则 hub 的提示会和设置不同步
 - 不做：`maxLibrary`（自动删图 = 数据损失）
 - **踩坑**：`api.setConfig(patch)` 是深合并，**删键必须用函数形式**（整份替换），否则删不掉

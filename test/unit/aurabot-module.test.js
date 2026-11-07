@@ -139,12 +139,14 @@ async function load(apiOver, settingOver) {
   return { mod, svc, ...ctx }
 }
 
-test('模块定义：正式名字 + 参数在本模块 + 挂在「表达」的表情包页', async () => {
+test('模块定义：名字和插件绑定 + 独立页（不挂内置页签）', async () => {
   const mod = (await import(MODULE.href + '?t=' + Math.random())).default
   assert.equal(mod.id, 'meme-qq', 'id 必须独立；叫 stickers 就成了顶掉内置')
-  assert.equal(mod.name, '统一表情库', '正式名字')
+  assert.equal(mod.name, '表情脑', '名字要和 dsh-meme-brain 插件相关')
   assert.equal(typeof mod.setup, 'function')
-  assert.equal(mod.tab, 'stickers', '「表情包」页签在「表达」下，挂上去参数才落在表达里')
+  // 不能写 tab:'stickers'：那个页签只在内置模块运行时才存在（TAB_MODS 写死），
+  // 内置关着时挂上去 = 设置彻底看不见
+  assert.equal(mod.tab, undefined, '不挂内置页签，用独立页')
   const keys = (mod.settings || []).map((s) => s.key).sort()
   assert.deepEqual(keys, [
     'autoChance', 'caption', 'collect', 'collectMode', 'enabled', 'faces',
