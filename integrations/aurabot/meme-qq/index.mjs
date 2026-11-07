@@ -285,6 +285,10 @@ export default {
     let lastToolSend = { chatId: '', at: 0, md5: '', name: '' }
     const TOOL_SEND_WINDOW = 20_000
 
+    // 刚存过图 → 这一轮回复静默：去掉文字，只回一个表情（用户明确要求：存图不要任何回应）
+    let saveSignal = { chatId: '', at: 0 }
+    const SAVE_SILENT_WINDOW = 20_000
+
     const textOf = (list) => list.filter((x) => x && x.kind === 'text').map((x) => String(x.value || '')).join(' ')
 
     api.on('reply/items', (items, info = {}) => {
@@ -294,7 +298,22 @@ export default {
       let out = items.slice()
       let touched = false
 
-      // 0) 「发表情」总开关关着：她写的表情不解析，也不自动配
+      // 0) 这一轮刚存过图 → 全程静默：不许出现「存好了 / 库里有了」这类话，只回一张表情
+      if (saveSignal.at && chatId === saveSignal.chatId && Date.now() - saveSignal.at < SAVE_SILENT_WINDOW) {
+        saveSignal = { chatId: '', at: 0 }
+        const keep = out.filter((it) => it && it.kind !== 'text' && it.kind !== 'sticker')
+        const pick = pickForReply(`${textOf(out)} ${String(info.userText || '')}`)
+        const abs = pick ? sendablePath(pick) : ''
+        if (!abs) {
+          // 库里没有能发的图：退化成「什么都不发」，也不许她把存图的话说出来
+          return keep.length ? keep : undefined
+        }
+        keep.push({ kind: 'image', value: abs })
+        log.debug('存图后的这一轮只回表情（不解释存图）')
+        return keep
+      }
+
+      // 1) 「发表情」总开关关着：她写的表情不解析，也不自动配
       if (!stickersOn()) {
         const stripped = out.filter((it) => !it || it.kind !== 'sticker')
         return stripped.length === out.length ? undefined : stripped
@@ -483,8 +502,12 @@ export default {
       const name = String(opts.name || '').trim().slice(0, 12)
       const tags = Array.isArray(opts.tags) ? opts.tags.filter(Boolean).slice(0, 3) : []
       const r = await addFromBuffer(buf, { name, tags, from: opts.from || 'tool' })
+      const chatId = String(opts.chatId || '')
 
-      if (r.ok) return { ok: true, md5: r.md5, message: `收进库了${name ? `「${name}」` : ''}` }
+      if (r.ok) {
+        if (chatId) saveSignal = { chatId, at: Date.now() }
+        return { ok: true, md5: r.md5, message: '（已收好，不用回话）' }
+      }
       if (!r.existed) return { ok: false, message: r.reason || '没存成' }
 
       const hit = r.md5 ? items().find((it) => it.md5 === r.md5) : null
@@ -498,12 +521,15 @@ export default {
             ...(tags.length ? { tags: tags.join(',') } : {}),
           })
           refresh().catch(() => {})
-          return { ok: true, md5: r.md5, message: `库里本来就有这张${shown}，${name ? `名字改成「${name}」了` : '标签更新了'}` }
+          if (chatId) saveSignal = { chatId, at: Date.now() }
+          return { ok: true, md5: r.md5, message: name ? `（名字改成「${name}」了，不用回话）` : '（标签更新了，不用回话）' }
         } catch (error) {
           log.debug('重复时改名失败：', error.message)
         }
       }
-      return { ok: false, md5: r.md5, message: `库里已经有这张了${shown}` }
+      // 重复且没改名：也是「存图行为」，照样静默
+      if (chatId) saveSignal = { chatId, at: Date.now() }
+      return { ok: true, md5: r.md5, message: `（库里本来就有这张${shown}，不用回话）` }
     }
 
     let capturing = Promise.resolve()
@@ -704,7 +730,7 @@ export default {
           execute: async ({ index, name, tags }) => {
             const seg = hub.stickerOf(current, Number(index) || 1)
             if (!seg) return { ok: false, message: '这张表情已经拿不到了（超过 30 分钟，或者这一轮里没有这张）' }
-            const r = await collectSeg(seg, { name: String(name || '').slice(0, 12), tags: Array.isArray(tags) ? tags.slice(0, 3) : [], from: current })
+            const r = await collectSeg(seg, { name: String(name || '').slice(0, 12), tags: Array.isArray(tags) ? tags.slice(0, 3) : [], from: current, chatId: current })
             return r
           },
         }),
@@ -719,7 +745,7 @@ export default {
             const recentMedia = typeof hub.recentMedia === 'function' ? hub.recentMedia(current) || [] : []
             const last = [...recentMedia].reverse().find((x) => x && x.seg)
             if (!last) return { ok: false, message: '这个聊天里最近没有可以存的图' }
-            const r = await collectSeg(last.seg, { name: String(name || '').slice(0, 12), tags: Array.isArray(tags) ? tags.slice(0, 3) : [], from: 'owner' })
+            const r = await collectSeg(last.seg, { name: String(name || '').slice(0, 12), tags: Array.isArray(tags) ? tags.slice(0, 3) : [], from: 'owner', chatId: current })
             return r
           },
         }),
@@ -805,7 +831,7 @@ export default {
 
     // ---------- 让她知道 ----------
 
-    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。库里没有的就直说没有，不要编。')
+    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；只在回复里写 <sticker:名字> 也可以。库里没有的就直说没有，不要编。\n存表情是你自己的小习惯，不用说出来：不要说「存好了」「收到了」「库里有了」，也不要提「库」这个字；别人发图或让你存，你就像平时互相发表情那样，回一个表情就行。')
 
     api.command({
       name: '表情',
