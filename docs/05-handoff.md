@@ -154,8 +154,19 @@ POST /meme-brain/api?op=char-rm   {name,force?}   → 有图在用时 409 E_IN_U
 - 模块读 `DSH_MEME_BRAIN_ROOT` 环境变量（和主项目一致），测试里用它指向临时目录
 - **已知残缺**：内置注册的 `/ext/stickers/...` 接口随模块停用而失效 → Aurabot 面板「表情库」卡片显示空；管库请用 DSH 侧栏「表情包」界面（已决定不处理）
 
-**判重只有一份**：`src/lib/pipeline.js` 的 `ingestBuffer()`，目录导入和 `op=add` 共用。
-**回退**：`modules.stickers.enabled = true` + `modules['meme-qq'].enabled = false`。
+### 峰谷节奏（peak-rhythm，跟表情库无关的独立模块）
+
+`integrations/aurabot/peak-rhythm/index.mjs`（同样用 `scripts/deploy-aurabot.mjs` 部署）。
+**它是独立的 Aurabot 模块，不依赖本插件**；放这个仓库只是因为部署脚本顺手。
+
+- 规则抄 `dsh-meter`（计价插件）：**工作日 09:00–12:00、14:00–18:00 是高峰**，其余与周末为空闲（半价），Asia/Shanghai
+- 唯一干预点 `group/decide`：高峰把「本来要回」按 `peakKeep%` 压下来（默认 20% 保留）；低谷把「本来不回」按 `offpeakInterject%` 插一句（默认 15%）
+- **私聊和被 @（`mode: 'must'`）不动**
+- `/峰谷` 命令看当前状态
+- 参数：启用开关 / 高峰保留% / 低谷插话% / 高峰时段（可改，但**不认节假日**）
+- 关掉开关 = 完全回原逻辑
+
+**判重只有一份**：`src/lib/pipeline.js` 的 `ingestBuffer()`，目录导入和 `op=add` 共用。**回退**：`modules.stickers.enabled = true` + `modules['meme-qq'].enabled = false`。
 **注意**：早期版本曾用同名 id 顶掉内置模块（已废弃），配置里残留的 `stickers.forkedFrom` 已清掉。
 
 ---
