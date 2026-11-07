@@ -546,7 +546,10 @@ export default {
     }
 
     async function captureOne(seg) {
-      if (!underQuota()) return false
+      if (!underQuota()) {
+        log.debug('这一小时收得够多了（配额用完），跳过')
+        return false
+      }
       let buf
       try {
         buf = await fetchSegment(seg, maxBytes())
@@ -577,21 +580,42 @@ export default {
       }
 
       const r = await ingest(buf, 'qq')
+      // 判重命中也是静默的「已经办好了」，但排查时要能看见，所以记一条 debug
+      if (r && !r.ok && r.reason) log.debug(`没入库：${r.reason}`)
       return Boolean(r && r.ok)
     }
 
     async function capture(msg) {
       const s = settings()
+      const nSticker = (msg.stickers || []).length
+      const nImage = (msg.images || []).length
+      // 入口观测：没这条日志就说明「模块没收到事件」，有但没后续就说明「事件里没图」。
+      // 排查「某张图为什么没存」全靠这一行，别删。
+      if (nSticker || nImage) {
+        log.debug(`收到图片消息 ${msg.kind || '?'} ${msg.chatId || '?'}：表情段 ${nSticker}，图片段 ${nImage}`)
+      } else if (/\[图片\]|\[动画表情\]/.test(String(msg.text || ''))) {
+        log.debug(`收到一条「${String(msg.text).slice(0, 10)}」但没有任何可下载的图片段（可能是接收链路丢段），跳过`)
+      }
+
       if (s.collect === false) return
       // 从群里 / 从私聊：分别能关
-      if (msg.kind === 'group' && s.fromGroups === false) return
-      if (msg.kind !== 'group' && s.fromPrivate === false) return
+      if (msg.kind === 'group' && s.fromGroups === false) {
+        log.debug('不从群里收表情，跳过')
+        return
+      }
+      if (msg.kind !== 'group' && s.fromPrivate === false) {
+        log.debug('不从私聊收表情，跳过')
+        return
+      }
 
       const ownerQQ = String(api.config().ownerQQ || '')
       const fromOwner = Boolean(ownerQQ) && String(msg.userId) === ownerQQ
       const mode = String(s.collectMode || 'auto')
       // 「她挑」：不自动收，先记着，她用 qq_collect_sticker 按编号收
-      if (mode === 'ask') return
+      if (mode === 'ask') {
+        log.debug('收取方式是「她挑」，不自动存')
+        return
+      }
       // 「只听主人的」：只有主人发的时候才自动收
       if (mode === 'owner' && !fromOwner) return
 
