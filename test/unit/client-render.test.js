@@ -161,6 +161,10 @@ function jsonResponse(data) {
 const requests = []
 let annotateResult = null
 let analyzeResult = null
+// 导入导出的假响应（测试里按需改）
+let exportResult = { ok: true, path: 'C:/x/meme.zip', items: 1, bytes: 1024, files: 2, missing: 0 }
+let importResult = { ok: true, added: 0, merged: 0, skipped: 0, missing: 0, chars: 0, failed: [] }
+let exportsResult = { dir: 'C:/x/exports', items: [{ name: 'meme.zip', path: 'C:/x/meme.zip', bytes: 1024, at: 0 }] }
 
 const FACETS = {
   total: 1,
@@ -217,6 +221,9 @@ globalThis.fetch = (url, init) => {
   }
   if (u.includes('op=facets')) return jsonResponse(FACETS)
   if (u.includes('op=chars')) return jsonResponse(CHARS)
+  if (u.includes('op=exports')) return jsonResponse(exportsResult)
+  if (u.includes('op=export')) return jsonResponse(exportResult)
+  if (u.includes('op=import')) return jsonResponse(importResult)
   if (u.includes('op=item')) return jsonResponse(currentItem)
 
   listCalls += 1
@@ -522,6 +529,44 @@ test('角色表：改外观 → 保存会 POST char-save，带上 originalName',
   assert.ok(postReq, '打的是 char-save')
   assert.equal(postReq.body.originalName, '大肥鱼', '要带原名（改名/防重名靠它）')
   assert.equal(postReq.body.look, '改过的外观特征')
+})
+
+test('导入导出：导出按钮真的打 op=export；导入面板能打开并提交路径', async () => {
+  resetHooks()
+  currentItem = fullItem
+  requests.length = 0
+  exportResult = { ok: true, path: 'C:/x/meme.zip', items: 3, bytes: 1024 * 1024, files: 5, missing: 0 }
+
+  let tree = await settle(() => createElement(Page, {}))
+  const btn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '导出')[0]
+  assert.ok(btn, '工具栏有「导出」')
+  btn.props.onClick()
+  await new Promise((r) => setImmediate(r))
+  tree = await settle(() => createElement(Page, {}))
+  const req = requests.find((r) => r.url.includes('op=export'))
+  assert.ok(req, '调了 export 接口')
+  assert.ok(textOf(tree).join('').includes('已导出 3 张'), '导出结果要显示出来')
+
+  // 打开导入面板
+  const importBtn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '导入')[0]
+  assert.ok(importBtn, '工具栏有「导入」')
+  importBtn.props.onClick()
+  tree = await settle(() => createElement(Page, {}))
+  assert.ok(textOf(tree).join('').includes('导入备份'), '面板打开了')
+  const pathInput = findAll(tree, (n) => n.type === 'input' && String(n.props?.placeholder || '').includes('.zip'))[0]
+  assert.ok(pathInput, '有路径输入框')
+  pathInput.props.onChange({ target: { value: 'C:/x/meme.zip' } })
+  tree = await settle(() => createElement(Page, {}))
+
+  requests.length = 0
+  importResult = { ok: true, added: 2, merged: 1, skipped: 0, missing: 0, chars: 1, failed: [] }
+  const startBtn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '开始导入')[0]
+  assert.ok(startBtn, '有开始导入')
+  startBtn.props.onClick()
+  await new Promise((r) => setImmediate(r))
+  const impReq = requests.find((r) => r.method === 'POST' && r.url.includes('op=import'))
+  assert.ok(impReq, '调了 import 接口')
+  assert.equal(impReq.body.path, 'C:/x/meme.zip')
 })
 
 test('筛选条：待办与角色各自带张数，点击后把筛选参数带给 Host', async () => {

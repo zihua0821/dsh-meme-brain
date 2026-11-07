@@ -82,6 +82,9 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?,character?,pin?}
 POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，串行，锁定则 skipped）
 POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库（QQ 补录用）
 POST /meme-brain/api?op=judge  body=图片原始字节  → 模型判「是不是表情包」（不写库，带缓存）
+POST /meme-brain/api?op=export                  → 打包整个库到 exports/*.zip
+GET  /meme-brain/api?op=exports                 → 已有导出包列表
+POST /meme-brain/api?op=import  {path}          → 从 zip 还原（只补不覆盖）
 POST /meme-brain/api?op=char-save {name,originalName?,look?,from?,aka?,kind?}
 POST /meme-brain/api?op=char-rm   {name,force?}   → 有图在用时 409 E_IN_USE
 ```
@@ -288,17 +291,16 @@ POST /meme-brain/api?op=char-rm   {name,force?}   → 有图在用时 409 E_IN_U
 
 ## 9. 下一步
 
-**当前状态**：M0–M5、M7、M8 完成；M6 角色与检索基本完成（38 条角色表、人工标注 86 张、相似传播未做）；M9 界面部分完成（详情/筛选/标注/角色表编辑/全字段可编辑都已完成，缺导入导出）。**187 项测试全绿**。
+**当前状态**：M0–M5、M7、M8 完成；M6 角色与检索基本完成（38 条角色表、人工标注 86 张）；M9 界面部分完成（详情/筛选/标注/角色表编辑/全字段可编辑/**导入导出**都已完成）。**205 项测试全绿**。
 
 **候选（按我判断的价值）**：
 
-1. **M9 导入导出**：293 张只有这一份，现在只备份索引不打包图片
-2. **标签生成**：73 张无标签；分析不产出 tags，要么单做一次，要么把 tags 加进分析提示词
-3. **相似传播（2a）**：改一张 → 应用到相似的几张（人工确认后批量），给以后新增的图用
-4. **删除入口上界面**：命令有 `/meme rm`，界面还没有按钮
-5. 小尾巴：6 张无外观、界面「疑似重复」筛
+1. **相似传播（2a）**：改一张 → 应用到相似的几张（人工确认后批量），给以后新增的图用
+2. **删除入口上界面**：命令有 `/meme rm`，界面还没有按钮
+3. **定时自动导出**：现在要手动点；可以每周自动打一份（`exports/` 会越攒越多，要加保留策略）
+4. 小尾巴：6 张无外观、界面「疑似重复」筛
 
-**已完结**：旧库已删（169MB 回收）；角色表从 6 条扩到 38 条并做了多轮去噪
+**已完结**：旧库已删（169MB 回收）；角色表从 6 条扩到 38 条并做了多轮去噪；标签已补齐（293/293）；备份可导出可还原（170MB / 0.2 秒）
 
 ---
 

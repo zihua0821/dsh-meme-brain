@@ -685,6 +685,105 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 导入面板：从导出的 zip 还原。
+     * 只做「补」，不做「覆盖」——已有的图不会被包里的旧标注改掉。
+     */
+    function ImportPanel({ onClose, onDone }) {
+      const [list, setList] = useState(null)
+      const [path, setPath] = useState('')
+      const [msg, setMsg] = useState('')
+      const [busy, setBusy] = useState(false)
+
+      useEffect(() => {
+        let alive = true
+        get({ op: 'exports' })
+          .then((d) => {
+            if (!alive) return
+            setList(d)
+            if (d.items?.length) setPath((p) => p || d.items[0].path)
+          })
+          .catch((e) => alive && setMsg(e.message))
+        return () => { alive = false }
+      }, [])
+
+      const run = async () => {
+        if (!path.trim()) { setMsg('先填一个 zip 路径'); return }
+        setBusy(true)
+        setMsg('正在导入…')
+        try {
+          const r = await post({ op: 'import' }, { path: path.trim() })
+          const parts = [`新增 ${r.added} 张`, `合并 ${r.merged} 张`, `跳过 ${r.skipped} 张`]
+          if (r.chars) parts.push(`角色表补 ${r.chars} 条`)
+          if (r.missing) parts.push(`包里缺图 ${r.missing} 张`)
+          if (r.failed?.length) parts.push(`失败 ${r.failed.length} 张`)
+          setMsg(parts.join(' · '))
+          onDone?.()
+        } catch (e) {
+          setMsg(`导入失败：${e.message}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const input = {
+        padding: '6px 8px', borderRadius: 6, border, background: 'transparent',
+        color: 'inherit', font: 'inherit', fontSize: 12, boxSizing: 'border-box',
+      }
+
+      return h('div', {
+        style: {
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+        },
+        onClick: onClose,
+      },
+        h('div', {
+          onClick: (e) => e.stopPropagation(),
+          style: {
+            width: 620, maxWidth: '94vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+            gap: 10, padding: 16, borderRadius: 12, border, background: 'Canvas', color: 'CanvasText',
+            boxShadow: '0 18px 50px rgba(0,0,0,0.35)',
+          },
+        },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('div', { style: { fontSize: 13 } }, '导入备份'),
+            h('span', { style: { flex: 1 } }),
+            h('button', {
+              type: 'button', onClick: onClose,
+              style: { padding: '4px 10px', borderRadius: 6, border, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer' },
+            }, '关闭'),
+          ),
+          h('div', { style: { fontSize: 11, opacity: 0.6, lineHeight: '17px' } },
+            '导入只补不覆盖：库里没有的加进来，已有的只补空字段——', h('b', null, '你人工标过的角色/名字/锁定不会被旧备份改掉')),
+          h('label', { style: { fontSize: 12, opacity: 0.7 } }, '备份文件路径'),
+          h('input', { value: path, onChange: (e) => setPath(e.target.value), placeholder: 'C:\\...\\meme-brain-20261107-221500.zip', style: input }),
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+            h('button', {
+              type: 'button', onClick: run, disabled: busy,
+              style: {
+                padding: '6px 12px', borderRadius: 6, border, background: 'rgba(77,107,254,0.14)',
+                color: 'inherit', font: 'inherit', fontSize: 12, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
+              },
+            }, busy ? '导入中…' : '开始导入'),
+            msg ? h('span', { style: { fontSize: 12, opacity: 0.8 } }, msg) : null,
+          ),
+          list?.items?.length
+            ? h('div', { style: { overflowY: 'auto', flex: 1, minHeight: 0, borderTop: border, paddingTop: 8 } },
+              h('div', { style: { fontSize: 11, opacity: 0.55, marginBottom: 4 } }, `已有的备份（${list.dir}）`),
+              list.items.map((it) => h('div', {
+                key: it.path,
+                onClick: () => setPath(it.path),
+                style: {
+                  padding: '5px 6px', fontSize: 12, cursor: 'pointer', borderRadius: 5,
+                  background: path === it.path ? 'rgba(77,107,254,0.14)' : 'transparent',
+                },
+              }, `${it.name}　${(it.bytes / 1048576).toFixed(0)}MB`)))
+            : null,
+        ),
+      )
+    }
+
     // 待办筛选项：key 对应 Host 的 todo 口径，name 是显示名
     const TODO_TABS = [
       { key: 'unanalyzed', label: '未分析' },
@@ -710,6 +809,10 @@ window.__ModuleLoader__.load({
       const [chars, setChars] = useState(null)
       const [showChars, setShowChars] = useState(false)
       const [refreshToken, setRefreshToken] = useState(0)
+      // 导入导出：导出是长动作（170MB），用 note 显示进度/结果
+      const [note, setNote] = useState('')
+      const [exporting, setExporting] = useState(false)
+      const [showImport, setShowImport] = useState(false)
 
       const load = useCallback(async (query, lim, todoKey, charKey) => {
         try {
@@ -744,6 +847,20 @@ window.__ModuleLoader__.load({
         await Promise.all([load(q, limit, todo, character), loadFacets(), loadChars()])
         setRefreshToken((n) => n + 1)
       }, [q, limit, todo, character, load, loadFacets, loadChars])
+
+      /** 导出整个库（打包成 zip，170MB 左右，要几秒） */
+      const runExport = useCallback(async () => {
+        setExporting(true)
+        setNote('正在打包…')
+        try {
+          const r = await post({ op: 'export' }, {})
+          setNote(`已导出 ${r.items} 张到 ${r.path}（${(r.bytes / 1048576).toFixed(0)}MB${r.missing ? `，${r.missing} 张图缺失未打包` : ''}）`)
+        } catch (e) {
+          setNote(`导出失败：${e.message}`)
+        } finally {
+          setExporting(false)
+        }
+      }, [])
 
       useEffect(() => { load(q, limit, todo, character) }, [q, limit, todo, character, load])
       // 角色表在挂载时就拉：详情里的角色下拉要用**全量**（含暂时 0 张的新角色），
@@ -789,7 +906,24 @@ window.__ModuleLoader__.load({
               },
             }, '角色表'),
             h('span', { style: { fontSize: 12, opacity: 0.6, flex: 'none' } }, `共 ${total} 张`),
+            h('button', {
+              type: 'button',
+              title: '把整个库（图 + 全部标注 + 角色表）打包成 zip',
+              onClick: runExport,
+              disabled: exporting,
+              style: {
+                padding: '7px 12px', borderRadius: 8, border, background: 'transparent',
+                color: 'inherit', font: 'inherit', cursor: exporting ? 'default' : 'pointer', opacity: exporting ? 0.6 : 1,
+              },
+            }, exporting ? '打包中…' : '导出'),
+            h('button', {
+              type: 'button',
+              title: '从备份 zip 还原（只补不覆盖）',
+              onClick: () => setShowImport(true),
+              style: { padding: '7px 12px', borderRadius: 8, border, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
+            }, '导入'),
           ),
+          note ? h('div', { style: { fontSize: 11, opacity: 0.75, lineHeight: '16px', wordBreak: 'break-all' } }, note) : null,
 
           facets
             ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
@@ -869,6 +1003,11 @@ window.__ModuleLoader__.load({
           onClose: () => setShowChars(false),
           onReload: loadChars,
           onChanged: () => { loadChars(); loadFacets(); load(q, limit, todo, character) },
+        }) : null,
+
+        showImport ? h(ImportPanel, {
+          onClose: () => setShowImport(false),
+          onDone: () => { refreshAll() },
         }) : null,
       )
     }

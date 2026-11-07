@@ -2,7 +2,8 @@
 //
 // 约束（ADR-0005 / G-2）：这里只做参数校验与转发，业务全部落在 lib/pipeline.js、lib/db.js、lib/query.js。
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { openDb, queryItems, findByPrefix, facets } from './db.js'
 import { annotate } from './annotate.js'
@@ -12,6 +13,7 @@ import { ingestBuffer } from './pipeline.js'
 import * as characterTable from './characters.js'
 import { saveCharacter, removeCharacter } from './charEdit.js'
 import { judgeBuffer } from './judge.js'
+import { exportLibrary, importLibrary, EXPORTS } from './backup.js'
 import { INDEX_DB, absPath } from './store.js'
 
 const ROUTE = '/meme-brain/api'
@@ -137,6 +139,20 @@ function open(readOnly) {
 
 function handleGet(url, res) {
   const op = url.searchParams.get('op') || 'list'
+
+  // 已有的导出包列表（界面用来填默认路径）
+  if (op === 'exports') {
+    const list = []
+    if (existsSync(EXPORTS)) {
+      for (const name of readdirSync(EXPORTS)) {
+        if (!name.endsWith('.zip')) continue
+        const st = statSync(join(EXPORTS, name))
+        list.push({ name, path: join(EXPORTS, name), bytes: st.size, at: st.mtimeMs })
+      }
+    }
+    list.sort((a, b) => b.at - a.at)
+    return sendJson(res, 200, { ok: true, data: { dir: EXPORTS, items: list } })
+  }
 
   if (op === 'image') {
     const md5 = String(url.searchParams.get('md5') || '')
@@ -290,6 +306,25 @@ async function handlePost(url, req, res, ctx) {
       if (!r.ok) {
         const status = r.code === 'E_IN_USE' ? 409 : r.code === 'E_NOT_FOUND' ? 404 : 400
         return sendJson(res, status, { ok: false, error: { code: r.code, message: r.message, count: r.count } })
+      }
+      return sendJson(res, 200, { ok: true, data: r })
+    }
+
+    // 导出整个库（打包成 zip）。会写 170MB 左右的文件，所以只在显式点按钮时做
+    if (op === 'export') {
+      try {
+        const r = exportLibrary(db)
+        return sendJson(res, 200, { ok: true, data: r })
+      } catch (error) {
+        return sendJson(res, 500, { ok: false, error: { code: 'E_EXPORT', message: error.message } })
+      }
+    }
+
+    if (op === 'import') {
+      const r = importLibrary(db, { from: String(body.path || '') })
+      if (!r.ok) {
+        const status = r.code === 'E_NOT_FOUND' ? 404 : 400
+        return sendJson(res, status, { ok: false, error: { code: r.code, message: r.message } })
       }
       return sendJson(res, 200, { ok: true, data: r })
     }
