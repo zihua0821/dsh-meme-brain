@@ -1,0 +1,5 @@
+# dsh-meme-brain bundle patch
+# 只插入一行 Host 插件；图库路径、阈值等配置在后续里程碑接入 Config。
+- insert:
+    - id: meme-brain
+      name: dsh-meme-brain

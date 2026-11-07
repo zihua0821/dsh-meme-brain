@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Meme Library",
+    "description": "Parse, deduplicate, store, score on seven dimensions, and search stickers. Commands and the web UI share the same endpoints, so every operation works without a UI."
+  }
+}
