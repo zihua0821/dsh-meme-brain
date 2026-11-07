@@ -62,7 +62,14 @@ after(() => {
 })
 
 function fakeApi(over = {}) {
-  const config = { stickers: { enabled: true, collect: true, autoChance: 0 }, ownerQQ: '1', modules: {} }
+  const config = {
+    stickers: {
+      enabled: true, autoChance: 0, faces: true, collect: true, collectMode: 'auto',
+      fromGroups: true, fromPrivate: true, maxPerHour: 20, maxLibrary: 300, caption: false,
+    },
+    ownerQQ: '1',
+    modules: {},
+  }
   const sets = []
   const handlers = {}
   const toolFactories = []
@@ -85,7 +92,8 @@ function fakeApi(over = {}) {
       },
       config: () => config,
       setConfig: (next) => { sets.push(next); Object.keys(next).forEach((k) => { config[k] = next[k] }) },
-      settings: () => ({ autoPick: false, autoPickChance: 0, auto: true, groups: true, ownerImages: false, maxPerHour: 30, maxMB: 8, maxSendMB: 5, autoAnalyze: false }),
+      // 只留本模块新造的那几个；其余参数一律走 config.stickers
+      settings: () => ({ autoPick: false, ownerImages: false, maxMB: 8, maxSendMB: 5 }),
       // 和插件真身的 defineTool 对齐
       defineTool: ({ name, description, properties = {}, required = [], execute }) => ({
         name,
@@ -116,7 +124,9 @@ test('模块定义：独立 id，不冒充内置', async () => {
   const mod = (await import(MODULE.href + '?t=' + Math.random())).default
   assert.equal(mod.id, 'meme-qq', 'id 必须独立；叫 stickers 就成了顶掉内置')
   assert.equal(typeof mod.setup, 'function')
-  assert.ok(Array.isArray(mod.settings) && mod.settings.length >= 6)
+  // 只放「内置没有、确实需要」的参数；其余一律认 config.stickers
+  const keys = (mod.settings || []).map((s) => s.key)
+  assert.deepEqual(keys.sort(), ['autoPick', 'maxMB', 'maxSendMB', 'ownerImages'])
 })
 
 test('内置模块只被停用，不是被替换', async () => {
@@ -209,6 +219,85 @@ test('find 走 op=find，参数名和 Host 对得上', async () => {
   await svc.find({ query: '生气的大肥鱼', limit: 3 })
   const hit = fetched.find((f) => f.url.includes('op=find'))
   assert.ok(hit && hit.url.includes('q=') && hit.url.includes('limit=3'))
+})
+
+// ---- 内置那套参数：模块停用了，但参数还在起作用，必须认 ----
+
+test('参数：表情包总开关关着时，不发也不解析 <sticker:>', async () => {
+  const { handlers, toolFactories, sent } = await load({
+    config: () => ({ stickers: { enabled: false, collect: true, caption: false }, ownerQQ: '1', modules: {} }),
+  })
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+  const r = await made.find((t) => t.name === 'qq_send_sticker').execute({ name: '开心炫饭' })
+  assert.equal(r.ok, false, '总开关关着不能发')
+  assert.equal(sent.length, 0)
+
+  const out = handlers['reply/items']([{ kind: 'text', value: '嗯' }, { kind: 'sticker', value: '开心炫饭' }], { chatId: 'private:1' })
+  assert.deepEqual(out.map((i) => i.kind), ['text'], '总开关关着就把表情项去掉')
+})
+
+test('参数：fromGroups / fromPrivate 分别管住收表情', async () => {
+  const offGroup = await load({
+    config: () => ({ stickers: { enabled: true, collect: true, fromGroups: false, fromPrivate: true, caption: false }, ownerQQ: '1', modules: {} }),
+  })
+  fetched.length = 0
+  offGroup.handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [{ type: 'image', data: { file: 'g.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 60))
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '关了群里就不该收')
+
+  const offPrivate = await load({
+    config: () => ({ stickers: { enabled: true, collect: true, fromGroups: true, fromPrivate: false, caption: false }, ownerQQ: '1', modules: {} }),
+  })
+  fetched.length = 0
+  offPrivate.handlers.message({ kind: 'private', chatId: 'private:2', userId: '2', stickers: [{ type: 'image', data: { file: 'p.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 60))
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '关了私聊就不该收')
+})
+
+test('参数：collectMode=ask 不自动收（她自己按编号挑）', async () => {
+  const { handlers } = await load({
+    config: () => ({ stickers: { enabled: true, collect: true, collectMode: 'ask', caption: false }, ownerQQ: '1', modules: {} }),
+  })
+  fetched.length = 0
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [{ type: 'image', data: { file: 'a.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 60))
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), 'ask 模式不该自动收')
+})
+
+test('参数：collectMode=owner 只收主人发的', async () => {
+  const { handlers } = await load({
+    config: () => ({ stickers: { enabled: true, collect: true, collectMode: 'owner', caption: false }, ownerQQ: '1', modules: {} }),
+  })
+  fetched.length = 0
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '999', stickers: [{ type: 'image', data: { file: 'n.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 60))
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '别人发的不要')
+
+  fetched.length = 0
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '1', stickers: [{ type: 'image', data: { file: 'o.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 80))
+  assert.ok(fetched.some((f) => f.url.includes('op=add')), '主人发的要收')
+})
+
+test('参数：collect 关着就完全不收', async () => {
+  const { handlers } = await load({
+    config: () => ({ stickers: { enabled: true, collect: false, caption: false }, ownerQQ: '1', modules: {} }),
+  })
+  fetched.length = 0
+  handlers.message({ kind: 'private', chatId: 'private:1', userId: '1', stickers: [{ type: 'image', data: { file: 'x.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 60))
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')))
+})
+
+test('参数：caption=false 时入库后不叫模型起名', async () => {
+  const { handlers } = await load({
+    config: () => ({ stickers: { enabled: true, collect: true, caption: false }, ownerQQ: '1', modules: {} }),
+  })
+  fetched.length = 0
+  handlers.message({ kind: 'private', chatId: 'private:1', userId: '1', stickers: [{ type: 'image', data: { file: 'c.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 120))
+  assert.ok(fetched.some((f) => f.url.includes('op=add')), '应该入库')
+  assert.ok(!fetched.some((f) => f.url.includes('op=analyze')), '关了看图起名就不该调分析')
 })
 
 test('列表快照带 path（发图要读文件）', async () => {

@@ -108,9 +108,11 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 
 - 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
 - 命令：`/表情 <关键词>`
-- 发送闸门：`maxSendMB` 默认 5MB（269/275 可发）
+- **参数一律认 `config.stickers`**（面板「表情包」页，内置停用后仍然有效）：`enabled` / `autoChance` / `collect` / `fromGroups` / `fromPrivate` / `collectMode` / `maxPerHour` / `caption`。`maxLibrary` 故意不实现（自动删图是数据损失）。
+- 自己只新增 4 个设置：`autoPick`、`ownerImages`、`maxMB`（收取上限，内置卡 1.5MB）、`maxSendMB`（发送上限，内置没有）
 - 数据全走 HTTP（`op=list` / `op=find` / `op=add` / `op=analyze` / `op=annotate`）
 - 模块读 `DSH_MEME_BRAIN_ROOT` 环境变量（和主项目一致），测试里用它指向临时目录
+- **已知残缺**：内置注册的 `/ext/stickers/...` 接口随模块停用而失效 → Aurabot 面板「表情库」卡片显示空；管库请用 DSH 侧栏「表情包」界面
 
 **判重只有一份**：`src/lib/pipeline.js` 的 `ingestBuffer()`，目录导入和 `op=add` 共用。
 **回退**：`modules.stickers.enabled = true` + `modules['meme-qq'].enabled = false`。

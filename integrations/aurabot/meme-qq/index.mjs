@@ -59,33 +59,28 @@ export default {
   description: '独立的表情模块：用 ~/.dsh/meme-brain 的统一库发图、找图、收表情。内置表情模块保持原样，只是被停用（随时可以切回去）。',
   tab: 'stickers',
   defaults: {
-    autoPick: true,      // 自动配表情（替代内置那一步）
-    autoPickChance: 0.35,
-    auto: true,          // 自动收表情
-    groups: true,
-    ownerImages: false,
-    maxPerHour: 30,
-    maxMB: 8,
-    maxSendMB: 5,
-    autoAnalyze: true,
+    autoPick: true,      // 自动配表情总开关（概率和内置共用 config.stickers.autoChance）
+    ownerImages: false,  // 主人发的普通图片也当表情收（内置没有这个）
+    maxMB: 8,            // 收取单张上限（内置没有这个）
+    maxSendMB: 5,        // 发送单张上限（内置没有这个）
   },
   settings: [
-    { key: 'autoPick', label: '自动配表情', type: 'switch', hint: '她回复时按概率补一张——内置模块停用后，这一步由本模块接住' },
-    { key: 'autoPickChance', label: '自动配的概率', type: 'number', min: 0, max: 1, step: 0.05, hint: '0.35 = 三成多会补一张' },
-    { key: 'auto', label: '自动收表情', type: 'switch', hint: 'QQ 把动图表情标成 sub_type=11，内置原本收不到；这里普通表情和动图都收' },
-    { key: 'groups', label: '群里也收', type: 'switch', hint: '关掉只在私聊收' },
+    { key: 'autoPick', label: '自动配表情', type: 'switch', hint: '关掉就只在她自己写 <sticker:…> 时发。概率用「表情包」页里那个「自动配表情的概率」' },
     { key: 'ownerImages', label: '主人发的图片也收', type: 'switch', hint: '默认关。只收够小、接近方形的' },
-    { key: 'maxPerHour', label: '每小时最多收几张', type: 'number', min: 0, max: 200, step: 1, hint: '0 = 不限' },
-    { key: 'maxMB', label: '单张上限（MB）', type: 'number', min: 1, max: 32, step: 1 },
-    { key: 'maxSendMB', label: '发出去的单张上限（MB）', type: 'number', min: 1, max: 16, step: 1, hint: 'base64/本地读取都受它限制；库里 269/275 张在 5MB 内' },
-    { key: 'autoAnalyze', label: '入库后自动起名打分', type: 'switch', hint: '每张会调一次视觉模型；关掉就只按 md5 存着，之后在界面里补' },
+    { key: 'maxMB', label: '收取单张上限（MB）', type: 'number', min: 1, max: 32, step: 1, hint: '内置卡 1.5MB，导致大动图永远收不进来；这里放宽' },
+    { key: 'maxSendMB', label: '发送单张上限（MB）', type: 'number', min: 1, max: 16, step: 1, hint: '内置没有这道闸门。库里 269/275 张在 5MB 内，超过的发出去会被网关拒' },
   ],
 
   setup(api) {
     const log = api.log
     const hub = api.core.hub
     const settings = () => api.settings()
+    /**
+     * 参数唯一来源：面板「表情包」页写的 config.stickers。
+     * 内置模块停用了，但这些参数还在、还能改，所以必须认它们——不要自己再造一套同义开关。
+     */
     const stickerCfg = () => api.config().stickers || {}
+    const stickersOn = () => stickerCfg().enabled !== false
 
     // ---------- 找 DSH 里的表情库 ----------
 
@@ -238,8 +233,15 @@ export default {
       if (!Array.isArray(items) || !items.length) return undefined
       const chatId = String(info.chatId || '')
       const inGroup = chatId.startsWith('group:')
+      const cfg = stickerCfg()
       let out = items.slice()
       let touched = false
+
+      // 0) 「表情包」总开关关着：她写的表情不解析，也不自动配（面板关掉就该完全不发）
+      if (cfg.enabled === false) {
+        const stripped = out.filter((it) => !it || it.kind !== 'sticker')
+        return stripped.length === out.length ? undefined : stripped
+      }
 
       // 1) 她写的 <sticker:标签> → 换成我们库里的图（内置停用后没人给她解析这个了）
       if (out.some((it) => it && it.kind === 'sticker')) {
@@ -271,12 +273,12 @@ export default {
         return touched ? out : undefined
       }
 
-      // 2) 自动配一张（替代内置的 autoChance 那一步）
+      // 2) 自动配一张（替代内置的 autoChance 那一步，概率读面板里的值）
       if (settings().autoPick) {
         const hasPic = out.some((it) => it && (it.kind === 'image' || it.kind === 'sticker'))
-        const chance = Number(api.config().stickers?.autoChance ?? settings().autoPickChance ?? 0.35)
+        const chance = Number(cfg.autoChance ?? 0.35)
         const tooMany = inGroup && out.length >= 2
-        if (!hasPic && !tooMany && Math.random() < (Number(settings().autoPickChance) || chance)) {
+        if (!hasPic && !tooMany && Math.random() < chance) {
           const pick = pickForReply(textOf(out))
           const abs = pick ? sendablePath(pick) : ''
           if (abs) {
@@ -293,7 +295,8 @@ export default {
 
     const recent = []
     function underQuota() {
-      const n = Math.max(0, Number(settings().maxPerHour) || 0)
+      // 配额读面板里的「每小时最多收」，不另设开关
+      const n = Math.max(0, Number(stickerCfg().maxPerHour ?? 20) || 0)
       if (!n) return true
       const now = Date.now()
       while (recent.length && now - recent[0] > 3600_000) recent.shift()
@@ -367,7 +370,8 @@ export default {
       }
       recent.push(Date.now())
       log.info(`表情入库 ${r.md5.slice(0, 8)}（${Math.round(buf.length / 1024)}KB）`)
-      if (settings().autoAnalyze) {
+      // 「看图起名」：面板里那个 caption 开关（内置也用它），不另设开关
+      if (stickerCfg().caption !== false) {
         analyzeRemote(r.md5)
           .then((d) => log.info(`起名「${d.item?.name || '?'}」`))
           .catch((error) => log.debug('自动起名失败（图已入库）：', error.message))
@@ -447,11 +451,16 @@ export default {
     async function capture(msg) {
       const cfg = stickerCfg()
       if (!cfg.collect) return
-      if (!settings().auto) return
-      if (msg.kind === 'group' && !settings().groups) return
-      // 「只听主人的」模式：别人发的就不自动收（她自己用 qq_collect_sticker 挑是另一条路）
+      // 从群里 / 从私聊：面板里能分别关
+      if (msg.kind === 'group' && cfg.fromGroups === false) return
+      if (msg.kind !== 'group' && cfg.fromPrivate === false) return
+
       const ownerQQ = String(api.config().ownerQQ || '')
-      if (String(cfg.collectMode || 'auto') === 'owner' && ownerQQ && String(msg.userId) !== ownerQQ) return
+      const mode = String(cfg.collectMode || 'auto')
+      // 「她挑」：不自动收，先记着，她用 qq_collect_sticker 按编号收
+      if (mode === 'ask') return
+      // 「只听主人的」：只有主人发的时候才自动收
+      if (mode === 'owner' && !(ownerQQ && String(msg.userId) === ownerQQ)) return
 
       const segs = []
       const seen = new Set()
@@ -504,6 +513,10 @@ export default {
 
     /** 直接发一张（不再走 hub.sendSticker——那是内置模块的服务） */
     async function sendItem(chatId, item) {
+      if (!stickersOn()) {
+        log.debug('表情包总开关关着，不发')
+        return false
+      }
       const abs = sendablePath(item)
       if (!abs) return false
       await api.sendImage(chatId, abs)
