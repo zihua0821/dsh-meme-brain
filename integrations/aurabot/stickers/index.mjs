@@ -243,6 +243,39 @@ export default {
       return { items: items() }
     }
 
+    // ---------- 兼容垫片：内置模块曾经导出这几个 ----------
+    //
+    // 旧的「动图表情补收」模块会调 api.use('stickers').addFromBuffer(...)。
+    // 它现在被我们关掉了，但万一哪天重新打开，没有这个函数就会崩。
+    // 有垫片的话它照样能用——只是入库改走新库。
+    async function addFromBuffer(buf, opts = {}) {
+      const { name = '', tags = [], from = 'manual' } = opts
+      const r = await ingest(buf, from)
+      if (!r.ok) return { ok: false, reason: r.reason, existed: /已经有了|重复/.test(String(r.reason || '')) }
+      if (name || (Array.isArray(tags) && tags.length)) {
+        try {
+          await annotateRemote({ md5: r.md5, name: name || undefined, tags: Array.isArray(tags) && tags.length ? tags.join(',') : undefined })
+        } catch (error) {
+          log.debug('垫片改名失败（图已入库）：', error.message)
+        }
+      }
+      refresh().catch(() => {})
+      return { ok: true, item: { md5: r.md5 } }
+    }
+
+    async function rename(md5, name, tags) {
+      try {
+        const body = { md5 }
+        if (name !== undefined) body.name = String(name).slice(0, 12)
+        if (Array.isArray(tags)) body.tags = tags.slice(0, 5).join(',')
+        const d = await annotateRemote(body)
+        refresh().catch(() => {})
+        return { ok: true, item: d }
+      } catch (error) {
+        return { ok: false, reason: error.message }
+      }
+    }
+
     // ---------- 收表情 ----------
 
     const recent = []
@@ -572,6 +605,6 @@ export default {
     log.info('表情包（新库）已接管：发表情/偷表情/找图都走 ~/.dsh/meme-brain')
 
     // hub 通过这些函数用我们的库
-    return { match, segmentFor, pickForReply, collect, library, markUsed, refresh, find, status: statusRemote }
+    return { match, segmentFor, pickForReply, collect, library, markUsed, refresh, find, status: statusRemote, addFromBuffer, rename }
   },
 }
