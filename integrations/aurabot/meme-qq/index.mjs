@@ -63,6 +63,7 @@ const DEFAULTS = {
   caption: true,          // 看图起名（唯一花钱的开关）
   maxMB: 8,               // 收取单张上限
   maxSendMB: 5,           // 发送单张上限
+  collectPlain: false,    // 普通图片（QQ 没标成表情段的）也收，但得过「像表情」的闸门
   faces: true,            // 夹 QQ 小黄脸（不是本库的功能，但面板页挪走后只有这里能改）
 }
 
@@ -92,6 +93,7 @@ export default {
     { key: 'caption', label: '看图起名', type: 'switch', hint: '收下后调一次视觉模型起名打分。关掉就只按 md5 存着，之后在界面里补' },
     { key: 'maxMB', label: '收取单张上限（MB）', type: 'number', min: 1, max: 32, step: 1, hint: '内置卡 1.5MB，大动图永远收不进来；这里放宽' },
     { key: 'maxSendMB', label: '发送单张上限（MB）', type: 'number', min: 1, max: 16, step: 1, hint: '超过就不发（发出去会被网关拒）。库里 269/275 张在 5MB 内' },
+    { key: 'collectPlain', label: '普通图片也收', type: 'switch', hint: '默认关：只收动图和 QQ 标成表情段的。打开后还会收「像表情」的普通图（近方形、边长≤600、≤512KB）；群里的截图和长图仍然不收' },
     { key: 'faces', label: '夹 QQ 小黄脸', type: 'switch', hint: '回复里能夹 /捂脸 /斜眼笑 这种系统表情。这是插件本来的功能，不属于表情库，但归到这里统一管' },
   ],
 
@@ -516,6 +518,33 @@ export default {
       return next
     }
 
+    /** 读图片尺寸（拿不到就返回 null，不抛） */
+    function sizeOf(buf) {
+      try {
+        const inbound = api.lib('chat/inbound.js')
+        const { width, height } = inbound.imageSize(buf)
+        return { width, height }
+      } catch (error) {
+        return null
+      }
+    }
+
+    /**
+     * 普通图片（QQ 没标成表情段的）能不能当表情收。
+     * 只在「普通图片也收」开着时才走到这里；闸门写死，避免又收进截图：
+     *   - 近方形：宽高比 0.6 ~ 1.7（横幅截图/长图排除）
+     *   - 边长 ≤ 600、体积 ≤ 512KB（921x713、878x620 那种截图排除）
+     */
+    function looksLikeSticker(buf) {
+      if (buf.length > 512 * 1024) return false
+      const size = sizeOf(buf)
+      if (!size || !size.width || !size.height) return false
+      const side = Math.max(size.width, size.height)
+      if (side > 600) return false
+      const ratio = size.width / size.height
+      return ratio >= 0.6 && ratio <= 1.7
+    }
+
     async function captureOne(seg) {
       if (!underQuota()) return false
       let buf
@@ -532,10 +561,21 @@ export default {
       // （实收了两张游戏截图：921x713 / 878x620）。文件名不能作为证据。
       const animated = Boolean(animatedKind(buf))
       const marked = ['1', '7', '11'].includes(subTypeOf(seg))
+
       if (!animated && !marked) {
-        log.debug('这张不像表情（既不是动图，也没被 QQ 标成表情段），跳过')
-        return false
+        const s = settings()
+        if (s.collectPlain !== true) {
+          log.debug(`不像表情，跳过（sub_type=${subTypeOf(seg) || '无'}，${Math.round(buf.length / 1024)}KB；要收普通图请在设置里打开「普通图片也收」）`)
+          return false
+        }
+        if (!looksLikeSticker(buf)) {
+          const size = sizeOf(buf)
+          log.debug(`普通图片不像表情，跳过（${size ? `${size.width}x${size.height}` : '尺寸未知'}，${Math.round(buf.length / 1024)}KB）`)
+          return false
+        }
+        log.info(`收了一张普通图片（近方形、${Math.round(buf.length / 1024)}KB）`)
       }
+
       const r = await ingest(buf, 'qq')
       return Boolean(r && r.ok)
     }

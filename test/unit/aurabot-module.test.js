@@ -131,6 +131,15 @@ function fakeApi(over = {}, settingOver = {}) {
         execute: async (args) => execute(args || {}),
       }),
       tool: (fn) => { toolFactories.push(fn) },
+      // 插件内部源码：模块用 api.lib('chat/inbound.js').imageSize 读尺寸
+      lib: (key) => (key === 'chat/inbound.js'
+        ? {
+          imageSize: (buf) => {
+            if (String(buf.subarray(0, 3)) === 'GIF') return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) }
+            return { width: 0, height: 0 }
+          },
+        }
+        : {}),
       on: (name, fn) => { handlers[name] = fn },
       rule: () => {},
       command: () => {},
@@ -158,9 +167,9 @@ test('模块定义：名字和插件绑定 + 独立页（不挂内置页签）',
   assert.equal(mod.tab, undefined, '不挂内置页签，用独立页')
   const keys = (mod.settings || []).map((s) => s.key).sort()
   assert.deepEqual(keys, [
-    'autoChance', 'caption', 'collect', 'collectMode', 'enabled', 'faces',
+    'autoChance', 'caption', 'collect', 'collectMode', 'collectPlain', 'enabled', 'faces',
     'fromGroups', 'fromPrivate', 'maxMB', 'maxPerHour', 'maxSendMB',
-  ], '11 个参数：8 个必要 + 2 个内置没有的 + 1 个路过（faces）')
+  ], '12 个参数：8 个必要 + 2 个上限 + collectPlain（普通图片开关）+ faces')
   // maxLibrary 已决定不做（自动删图 = 数据损失）
   assert.ok(!keys.includes('maxLibrary'))
 })
@@ -324,14 +333,35 @@ test('主人发图被自动收集：同样不影响她怎么回', async () => {
   assert.equal(out, undefined, '自动收集也不该干扰她的回复')
 })
 
-test('收表情：普通静态图片不收（QQ 文件名是 md5 也不能当证据）', async () => {
-  const { handlers } = await load({}, { caption: false })
-  imageBytes = FAKE_IMAGE // 静态字节
+test('收表情：普通静态图片默认不收（除非打开「普通图片也收」）', async () => {
+  const { handlers } = await load({}, { caption: false, collectPlain: false })
+  imageBytes = FAKE_IMAGE
   fetched.length = 0
-  // sub_type=0 + 32 位 md5 文件名：曾经就是被这条判进来的（游戏截图）
   handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'a'.repeat(32) + '.png', sub_type: 0 } }] })
   await new Promise((r) => setTimeout(r, 120))
-  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '普通图片不该进库')
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '默认不收普通图片')
+  imageBytes = FAKE_IMAGE
+})
+
+test('收表情：打开 collectPlain 后，小的近方图照收', async () => {
+  const { handlers } = await load({}, { caption: false, collectPlain: true })
+  // 200x200 的假图：让 imageSize 能读出来（用真实 PNG 头最省事，这里用 GIF 头 + 逻辑尺寸）
+  imageBytes = Buffer.from('GIF89a\xc8\x00\xc8\x00', 'binary') // 宽高各 200
+  fetched.length = 0
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'b'.repeat(32) + '.gif', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 150))
+  assert.ok(fetched.some((f) => f.url.includes('op=add')), '小方图应该收')
+  imageBytes = FAKE_IMAGE
+})
+
+test('收表情：打开 collectPlain 后，大截图仍然不收', async () => {
+  const { handlers } = await load({}, { caption: false, collectPlain: true })
+  // 900x700 的假图：超过边长 600 的闸门
+  imageBytes = Buffer.from('GIF89a\x84\x03\xbc\x02', 'binary')
+  fetched.length = 0
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'c'.repeat(32) + '.png', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 150))
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '大截图不该收')
   imageBytes = FAKE_IMAGE
 })
 
