@@ -40,6 +40,8 @@ const ITEMS = [
 ]
 
 let fetched = []
+// 模块日志（断言用）：load() 会清空
+let logLines = []
 const realFetch = globalThis.fetch
 const FAKE_IMAGE = Buffer.from('GIF89a fake image bytes')
 // 真动图：GIF 头 + 两个图形控制扩展（animatedKind 就靠这个判多帧）
@@ -54,6 +56,8 @@ let imageBytes = FAKE_IMAGE
 let addSeq = 0
 // 模型判定的返回值，测试里按场景改
 let judgeVerdict = { sticker: false, why: '截图' }
+// op=add 的返回值（默认成功；判重测试用它模拟「库里已有」）
+let addVerdict = null
 globalThis.fetch = async (url, init) => {
   const u = String(url)
   fetched.push({ url: u, method: init?.method || 'GET' })
@@ -62,7 +66,7 @@ globalThis.fetch = async (url, init) => {
     let data
     if (u.includes('op=add')) {
       addSeq += 1
-      data = { added: true, md5: String(addSeq).padStart(32, '0'), near: null, item: { name: '' } }
+      data = addVerdict || { added: true, md5: String(addSeq).padStart(32, '0'), near: null, item: { name: '' } }
     } else if (u.includes('op=judge')) {
       data = { sticker: judgeVerdict.sticker, why: judgeVerdict.why, md5: 'judged', cached: Boolean(judgeVerdict.cached) }
     } else if (u.includes('op=analyze')) {
@@ -108,7 +112,12 @@ function fakeApi(over = {}, settingOver = {}) {
     toolFactories,
     sent,
     api: {
-      log: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
+      log: {
+        info: (m, ...rest) => logLines.push({ level: 'info', text: [m, ...rest].join(' ') }),
+        warn: (m, ...rest) => logLines.push({ level: 'warn', text: [m, ...rest].join(' ') }),
+        debug: (m, ...rest) => logLines.push({ level: 'debug', text: [m, ...rest].join(' ') }),
+        error: (m, ...rest) => logLines.push({ level: 'error', text: [m, ...rest].join(' ') }),
+      },
       dsh: { get: (n) => (n === 'webServer' ? { getOrigin: () => 'http://stub' } : undefined) },
       core: {
         hub: {
@@ -154,12 +163,29 @@ function fakeApi(over = {}, settingOver = {}) {
 }
 
 async function load(apiOver, settingOver) {
+  logLines = []
+  addVerdict = null
   const ctx = fakeApi(apiOver, settingOver)
   const mod = (await import(MODULE.href + '?t=' + Math.random())).default
   const svc = mod.setup(ctx.api)
   await svc.refresh()
   return { mod, svc, ...ctx }
 }
+
+test('判重命中：日志里要写清撞上的是哪一张（不能只说「重复」）', async () => {
+  const { handlers } = await load({}, { caption: false })
+  const existing = ITEMS[0] // 开心炫饭
+  addVerdict = { added: false, md5: 'f'.repeat(32), near: { md5: existing.md5, reason: 'near', max: 3 } }
+  imageBytes = ANIMATED_IMAGE
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'h'.repeat(32) + '.gif', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 200))
+  imageBytes = FAKE_IMAGE
+
+  const dup = logLines.find((l) => l.text.startsWith('没入库：'))
+  assert.ok(dup, '应该有「没入库」日志')
+  assert.match(dup.text, /开心炫饭/, '要说清撞上哪张')
+  assert.match(dup.text, /距离 3/, '带上距离')
+})
 
 test('模块定义：名字和插件绑定 + 独立页（不挂内置页签）', async () => {
   const mod = (await import(MODULE.href + '?t=' + Math.random())).default

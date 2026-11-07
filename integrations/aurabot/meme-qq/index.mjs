@@ -449,7 +449,12 @@ export default {
         return { ok: false, reason: `入库失败：${error.message}` }
       }
       if (!r.added) {
-        return { ok: false, md5: r.md5, reason: r.near?.reason === 'byte-identical' ? '库里已经有了' : '和库里某张重复' }
+        // 判重命中时把「撞上谁」查出来：日志里只说「和库里重复」等于没说
+        const nearMd5 = r.near?.md5 || r.md5
+        const hit = items().find((it) => it.md5 === nearMd5)
+        const who = hit ? `「${hit.name || '未命名'}」(${String(nearMd5).slice(0, 8)})` : String(nearMd5).slice(0, 8)
+        const dist = typeof r.near?.max === 'number' ? `，距离 ${r.near.max}` : ''
+        return { ok: false, md5: nearMd5, reason: `和库里${who}重复${dist}` }
       }
       recent.push(Date.now())
       log.info(`表情入库 ${r.md5.slice(0, 8)}（${Math.round(buf.length / 1024)}KB）`)
