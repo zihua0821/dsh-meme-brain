@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 
 import { openDb, queryItems, findByPrefix, facets } from './db.js'
 import { annotate } from './annotate.js'
+import { runAnalyze } from './analyze.js'
 import { INDEX_DB, absPath } from './store.js'
 
 const ROUTE = '/meme-brain/api'
@@ -168,7 +169,7 @@ function handleGet(url, res) {
   }
 }
 
-async function handlePost(url, req, res) {
+async function handlePost(url, req, res, ctx) {
   const op = url.searchParams.get('op') || ''
   const body = await readJson(req)
   const db = open()
@@ -194,9 +195,54 @@ async function handlePost(url, req, res) {
       })
     }
 
+    if (op === 'analyze') {
+      return await analyzeOne(ctx, db, res, String(body.md5 || ''))
+    }
+
     return sendJson(res, 400, { ok: false, error: { code: 'E_BAD_OP', message: `未知 op：${op}` } })
   } finally {
     db.close?.()
+  }
+}
+
+// 正在分析的 md5：防止连点把同一张送去模型好几次（既费钱又互相覆盖结果）
+const inFlight = new Set()
+
+/**
+ * 分析单张。业务全部在 lib/analyze.js，这里只负责：
+ * 校验、串行化、把结果翻译成界面能读的形状。
+ */
+async function analyzeOne(ctx, db, res, prefix) {
+  const { row } = findByPrefix(db, prefix)
+  if (!row) return sendJson(res, 404, { ok: false, error: { code: 'E_NOT_FOUND' } })
+
+  if (!ctx?.llm || !ctx?.attachments) {
+    return sendJson(res, 409, {
+      ok: false,
+      error: { code: 'E_NO_LLM', message: '当前宿主没有 llm / attachments 服务，无法分析' },
+    })
+  }
+
+  if (inFlight.has(row.md5)) {
+    return sendJson(res, 409, { ok: false, error: { code: 'E_BUSY', message: '这张正在分析中，等它跑完' } })
+  }
+
+  inFlight.add(row.md5)
+  try {
+    // force：按钮的语义就是「现在就（重新）分析这一张」
+    const result = await runAnalyze(ctx, db, { md5: row.md5, force: true, rename: false, includePinned: false })
+    const after = findByPrefix(db, row.md5).row
+    return sendJson(res, 200, {
+      ok: true,
+      data: {
+        item: detailItem(after),
+        result: { ok: result.ok, failed: result.failed, skipped: result.skipped },
+      },
+    })
+  } catch (error) {
+    return sendJson(res, 500, { ok: false, error: { code: 'E_ANALYZE', message: error.message } })
+  } finally {
+    inFlight.delete(row.md5)
   }
 }
 
@@ -216,7 +262,7 @@ export function registerApi(ctx) {
         }
         try {
           const url = new URL(req.url || '/', 'http://localhost')
-          if (req.method === 'POST') return await handlePost(url, req, res)
+          if (req.method === 'POST') return await handlePost(url, req, res, ctx)
           return handleGet(url, res)
         } catch (error) {
           return sendJson(res, 500, { ok: false, error: { code: 'E_INTERNAL', message: error.message } })

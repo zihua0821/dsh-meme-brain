@@ -160,6 +160,7 @@ function jsonResponse(data) {
 /** 记录每次请求，供断言「界面到底发了什么」 */
 const requests = []
 let annotateResult = null
+let analyzeResult = null
 
 const FACETS = {
   total: 1,
@@ -202,6 +203,9 @@ globalThis.fetch = (url, init) => {
   requests.push({ url: u, method: init?.method || 'GET', body: init?.body ? JSON.parse(init.body) : null })
 
   if (u.includes('op=annotate')) return jsonResponse(annotateResult || currentItem)
+  if (u.includes('op=analyze')) {
+    return jsonResponse(analyzeResult || { item: currentItem, result: { ok: 1, failed: [], skipped: [] } })
+  }
   if (u.includes('op=facets')) return jsonResponse(FACETS)
   if (u.includes('op=item')) return jsonResponse(currentItem)
 
@@ -421,4 +425,69 @@ test('只改名字时不会提交 character（避免顺手把模型判断锁死�
   const postReq = requests.find((r) => r.method === 'POST')
   assert.equal(postReq.body.name, '新名字')
   assert.ok(!('character' in postReq.body), '没改角色就不该提交 character')
+})
+
+test('单张分析按钮：未分析的叫「分析这张」，点了真的发分析请求并刷新详情', async () => {
+  resetHooks()
+  const before = { ...fullItem, analyzed: false, analyzedAt: null, score: null, appearance: '', character: '', charConf: '' }
+  const after = {
+    ...fullItem,
+    analyzed: true,
+    analyzedAt: 1794044000000,
+    score: { valence: 0.9, arousal: 0.1, aggression: 0, intimacy: 0.5, absurdity: 0.3 },
+    appearance: '模型新写的外观',
+    character: '',
+    charConf: '',
+  }
+  analyzeResult = { item: after, result: { ok: 1, failed: [], skipped: [] } }
+
+  let tree = await openDetail(before)
+  let text = textOf(tree).join('')
+  assert.ok(text.includes('分析这张'), '未分析时按钮文案是「分析这张」')
+
+  requests.length = 0
+  const btn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '分析这张')[0]
+  assert.ok(btn, '找到分析按钮')
+  assert.ok(!btn.props.disabled, '未锁定时可点')
+
+  btn.props.onClick()
+  await new Promise((r) => setImmediate(r))
+  tree = await settle(() => createElement(Page, {}))
+
+  const postReq = requests.find((r) => r.method === 'POST')
+  assert.ok(postReq, '发出了 POST')
+  assert.ok(postReq.url.includes('op=analyze'), '打的是 analyze 接口')
+  assert.equal(postReq.body.md5, before.md5)
+
+  text = textOf(tree).join('')
+  assert.ok(text.includes('分析完成'), '有完成提示')
+  assert.ok(text.includes('模型新写的外观'), '结果直接刷新到界面上')
+  assert.ok(text.includes('0.90'), '分数立刻可见')
+  assert.ok(text.includes('重新分析'), '分析过之后按钮变成「重新分析」')
+})
+
+test('单张分析：被人工锁定时按钮禁用，并说明原因', async () => {
+  resetHooks()
+  const locked = { ...fullItem, pinned: true, character: '大肥鱼', charConf: '人工' }
+
+  const tree = await openDetail(locked)
+  const text = textOf(tree).join('')
+  assert.ok(text.includes('人工锁定中'), '提示锁定状态')
+
+  const btn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '重新分析')[0]
+  assert.ok(btn, '锁定条目也显示按钮（说明为何不可用）')
+  assert.equal(btn.props.disabled, true, '锁定时禁用，避免白花一次模型调用')
+})
+
+test('单张分析：模型报错时把原因显示出来', async () => {
+  resetHooks()
+  analyzeResult = { item: fullItem, result: { ok: 0, failed: [{ md5: fullItem.md5, message: '输出被截断（max-tokens）' }], skipped: [] } }
+
+  let tree = await openDetail(fullItem)
+  requests.length = 0
+  findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === '重新分析')[0].props.onClick()
+  await new Promise((r) => setImmediate(r))
+  tree = await settle(() => createElement(Page, {}))
+
+  assert.ok(textOf(tree).join('').includes('分析失败：输出被截断'), '失败原因要显示出来')
 })

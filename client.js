@@ -221,6 +221,29 @@ window.__ModuleLoader__.load({
         }
       }, [md5, onSaved])
 
+      const [analyzing, setAnalyzing] = useState(false)
+
+      const runAnalyze = useCallback(async () => {
+        setAnalyzing(true)
+        setMsg('正在叫模型看这张…')
+        try {
+          const data = await post({ op: 'analyze' }, { md5 })
+          setItem(data.item)
+          // 名字和角色可能被模型更新过，输入框跟着刷新
+          setName(data.item.name || '')
+          setChar(data.item.character || '')
+          const r = data.result || {}
+          if (r.skipped?.length) setMsg(`没分析：${r.skipped[0].message}`)
+          else if (r.failed?.length) setMsg(`分析失败：${r.failed[0].message}`)
+          else setMsg('分析完成，结果已更新')
+          onSaved?.()
+        } catch (e) {
+          setMsg(`分析失败：${e.message}`)
+        } finally {
+          setAnalyzing(false)
+        }
+      }, [md5, onSaved])
+
       if (msg && !item) return h('div', { style: { padding: 12, fontSize: 12, opacity: 0.7 } }, msg)
       if (!item) return h('div', { style: { padding: 12, fontSize: 12, opacity: 0.7 } }, '载入中…')
 
@@ -271,6 +294,20 @@ window.__ModuleLoader__.load({
               color: 'inherit', font: 'inherit', cursor: 'pointer',
             },
           }, '保存'),
+          h('button', {
+            type: 'button',
+            onClick: runAnalyze,
+            disabled: analyzing || item.pinned,
+            title: item.pinned
+              ? '已人工锁定，先点「解除锁定」再分析'
+              : '调用模型重新看这张图（会覆盖模型的分数、外观、图上文字）',
+            style: {
+              padding: '6px 10px', borderRadius: 6, border,
+              background: 'transparent', color: 'inherit', font: 'inherit',
+              cursor: analyzing || item.pinned ? 'not-allowed' : 'pointer',
+              opacity: analyzing || item.pinned ? 0.45 : 1,
+            },
+          }, analyzing ? '分析中…' : item.analyzed ? '重新分析' : '分析这张'),
           item.pinned
             ? h('button', {
               type: 'button', onClick: unlock,

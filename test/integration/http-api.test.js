@@ -52,6 +52,32 @@ seed(B, { name: null, character: null, tags: null, analyzed_at: null, analyzedAt
 // ---- 假 req/res ----
 let handler = null
 
+/** 假模型：永远返回一份合法分析，用来验证「按钮 → 分析 → 落库」这条链 */
+function fakeModel() {
+  const seen = []
+  return {
+    seen,
+    attachments: {
+      admitPromptContent: async (parts) => {
+        seen.push(parts.filter((p) => p.type === 'image').length)
+        return parts
+      },
+    },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'p', model: 'fake-model' }) },
+    llm: {
+      stream: () => (async function* () {
+        yield {
+          type: 'text-delta',
+          text: '帧: 1\n角色: 未知\n角色把握: 低\n文字: 按钮测试\n外观: 蓝发\n情绪: 0.3\n强度: 0.4\n攻击: 0\n亲密: 0.1\n抽象: 0.2\n指向: 无\n场景: 日常\n名字: 模型起的名\n一句话: 测试\n',
+        }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })(),
+    },
+  }
+}
+
+const model = fakeModel()
+
 const ctx = {
   effect: (fn) => fn(),
   webServer: {
@@ -60,6 +86,7 @@ const ctx = {
       return () => {}
     },
   },
+  ...model,
 }
 http.registerApi(ctx)
 
@@ -187,4 +214,69 @@ test('非回环地址一律 403', async () => {
   const req = { ...makeReq('GET', '/meme-brain/api?op=list'), socket: { remoteAddress: '10.0.0.9' } }
   await handler(req, res)
   assert.equal(res.statusCode, 403)
+})
+
+test('analyze：单张分析真的跑了模型并落库', async () => {
+  const C = 'c'.repeat(32)
+  seed(C, { name: '人工名', character: null, tags: null, analyzedAt: null, score: null, appearance: null })
+
+  const r = await call('POST', 'op=analyze', { md5: C })
+  assert.equal(r.status, 200)
+  assert.equal(r.json.ok, true)
+
+  const { item, result } = r.json.data
+  assert.equal(result.ok, 1, '成功分析了 1 张')
+  assert.equal(item.analyzed, true)
+  assert.equal(item.model, 'fake-model')
+  assert.ok(item.score && typeof item.score.valence === 'number', '分数进了库也回了界面')
+  assert.equal(item.appearance, '蓝发')
+  assert.equal(item.text, '按钮测试')
+  assert.equal(item.name, '人工名', '已有名字不动（要改名得显式 --rename）')
+
+  assert.ok(model.seen.length >= 1, '模型确实被调用了')
+})
+
+test('analyze：没有名字的图会被模型补一个名字', async () => {
+  const E = 'e'.repeat(32)
+  seed(E, { name: null, character: null, tags: null, analyzedAt: null })
+
+  const r = await call('POST', 'op=analyze', { md5: E })
+  assert.equal(r.json.data.item.name, '模型起的名', '空名字应该被补上')
+})
+
+test('analyze：锁定的人工标注不会被这张按钮覆盖', async () => {
+  const D = 'd'.repeat(32)
+  seed(D, { name: '人工定的', character: '大肥鱼', charConf: '人工', pinned: 1, analyzedAt: Date.now() })
+
+  const r = await call('POST', 'op=analyze', { md5: D })
+  assert.equal(r.status, 200)
+  const { item, result } = r.json.data
+  assert.equal(result.ok, 0, '没有处理')
+  assert.equal(result.skipped.length, 1, '要说明为什么没跑')
+  assert.match(result.skipped[0].message, /人工锁定/)
+  assert.equal(item.character, '大肥鱼', '人工角色原样保留')
+  assert.equal(item.pinned, true)
+})
+
+test('analyze：找不到的 md5 返回 404；没有 llm 服务返回 409', async () => {
+  const missing = await call('POST', 'op=analyze', { md5: 'ffffffff' })
+  assert.equal(missing.status, 404)
+
+  // 换一个没有 llm 的 ctx：注册到一个临时 handler 上
+  let bare = null
+  const ctxNoLlm = { effect: (fn) => fn(), webServer: { register: (route) => { bare = route.handler; return () => {} } } }
+  http.registerApi(ctxNoLlm)
+
+  const res = {
+    statusCode: 0,
+    body: '',
+    writeHead(status) { this.statusCode = status; return this },
+    end(p) { this.body += p; return this },
+  }
+  await bare(makeReq('POST', '/meme-brain/api?op=analyze', { md5: 'c'.repeat(32) }), res)
+  assert.equal(res.statusCode, 409)
+  assert.equal(JSON.parse(res.body).error.code, 'E_NO_LLM')
+
+  // 把主 handler 注册回来，避免影响后续测试
+  http.registerApi(ctx)
 })

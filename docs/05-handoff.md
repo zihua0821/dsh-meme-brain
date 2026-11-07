@@ -8,14 +8,14 @@
 ## 0. 复核快照（每次新会话先看这节）
 
 ```
-node --test "test/**/*.test.js"   → 90 pass / 0 fail
+node --test "test/**/*.test.js"   → 97 pass / 0 fail
 node scripts/verify.mjs           → 275 文件 / 275 记录 / 孤儿 0 / 缺文件 0 / 重复对 0
 GET :<port>/meme-brain/api?op=list   → 200，total=275      （能返回 = Host 已加载）
-GET :<port>/meme-brain/api?op=facets → 角色分布 26/21/11/6/1，未知角色 210
+GET :<port>/meme-brain/api?op=facets → 角色分布 26/21/11/7/1，未知角色 209，未分析 3
 git status                        → clean（当前 HEAD 见 git log）
 ```
 
-指标与下表一致：275 / 271 已分析 / 265 有外观 / 65 有角色 / schema v3 / 角色表 6 条。
+指标与下表一致：275 / 272 已分析 / 266 有外观 / 66 有角色 / schema v3 / 角色表 6 条。
 
 ---
 
@@ -57,7 +57,7 @@ git status                        → clean（当前 HEAD 见 git log）
 DSH 侧栏「表情包」图标 → 主区：筛选条 + 网格 + 详情抽屉。
 - 筛选条：全部 / 未分析 / 未命名 / 无标签 / 未知角色 / 各角色（都带张数，来自 `op=facets`）
 - 网格：每格图 + 名字 + 角色名
-- 详情抽屉：名字/标签/**角色**可改（角色留空=未知）；**分析结果**（角色/把握/外观/场景/指向/图上文字）+ **评分**（五维条形）+ **文件与来源**（md5/指纹/状态/重复/来源/入库/分析模型与时间）；锁定的条目有「解除锁定」
+- 详情抽屉：名字/标签/**角色**可改（角色留空=未知）；**分析这张 / 重新分析**按钮（锁定条目禁用）；**分析结果**（角色/把握/外观/场景/指向/图上文字）+ **评分**（五维条形）+ **文件与来源**（md5/指纹/状态/重复/来源/入库/分析模型与时间）；锁定的条目有「解除锁定」
 - 未分析的图给出可复制的 `/meme analyze --md5=xxxxxxxx`
 
 数据全部来自 `GET/POST /meme-brain/api`（仅 127.0.0.1）。
@@ -70,6 +70,7 @@ GET  /meme-brain/api?op=item&md5=<前缀>          → 全部分析字段（deta
 GET  /meme-brain/api?op=facets                   → 筛选条计数（角色分布/待办/锁定数）
 GET  /meme-brain/api?op=image&md5=<前缀>        → 二进制
 POST /meme-brain/api?op=annotate  {md5,name?,tags?,character?,pin?}
+POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，串行，锁定则 skipped）
 ```
 
 标注规则（`src/lib/annotate.js`）：填角色 → 写角色表（没有就新建，出处 `ui`）+ `pinned=1` + 把握标 `人工`；清空角色 → 解锁交还模型；`pin:false` → 解锁。**只有改角色才上锁**，改名字/标签不动锁定状态。
@@ -116,7 +117,7 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?,character?,pin?}
 | M6 | 角色表 + 检索 | 🔶 75%：表/命令/规范化/`--character` 检索/**人工标注 + pinned 锁定**；**缺** L3 归纳、批量标注 `bulk` |
 | M7 | AI 工具 `meme_find` + cordis 服务 `memeBrain` | ⬜ 未开始 |
 | M8 | QQ 采集接入（中继模块）+ 判重前置 | ⬜ 未开始 |
-| M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 详情页 + M9-b 筛选条/实时标注/锁定已完成**；缺批量操作、导入导出 |
+| M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 详情页 + M9-b 筛选条/实时标注/锁定 + M9-c 单张分析按钮已完成**；缺批量操作、导入导出 |
 
 ---
 
@@ -180,7 +181,7 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?,character?,pin?}
 6. ~~没有 `pinned` 保护机制~~ → **M9-b 已实现**：手工改角色 → `pinned=1` + 把握标 `人工`；`analyze` 默认跳过，`--include-pinned` 才放行；界面可解锁
 7. 没有批量标注命令（`bulk`）：现在只能一张一张点
 8. ~~项目尚未 git init~~ → **已初始化并提交**（`4072774`）；当前 HEAD 见 `git log`
-9. 界面无法触发分析（只能看和改标注）；筛选条不含「疑似重复」（要算 dHash 聚类，代价高，暂未做）
+9. 界面只能**单张**触发分析（M9-c），没有批量分析入口；筛选条不含「疑似重复」（要算 dHash 聚类，代价高，暂未做）
 
 ---
 
