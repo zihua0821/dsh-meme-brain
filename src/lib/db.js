@@ -192,7 +192,7 @@ export const UNKNOWN_CHARACTER = '__none__'
  * 条件查询（列表用）。
  * @param {object} index
  * @param {{state?:string, q?:string, sort?:string, limit?:number, offset?:number,
- *          character?:string, todo?:string}} opts
+ *          character?:string, todo?:string, appearance?:string, scene?:string}} opts
  */
 export function queryItems(index, opts = {}) {
   const where = []
@@ -202,13 +202,18 @@ export function queryItems(index, opts = {}) {
     params.push(opts.state)
   }
   if (opts.q) {
-    where.push('(name LIKE ? OR tags LIKE ? OR md5 LIKE ? OR appearance LIKE ?)')
+    // 图上文字也要能搜：找人问「那张写着无所谓的图」时，文字往往比名字更准
+    where.push('(name LIKE ? OR tags LIKE ? OR md5 LIKE ? OR appearance LIKE ? OR text LIKE ?)')
     const like = `%${opts.q}%`
-    params.push(like, like, like, like)
+    params.push(like, like, like, like, like)
   }
   if (opts.appearance) {
     where.push('appearance LIKE ?')
     params.push(`%${opts.appearance}%`)
+  }
+  if (opts.scene) {
+    where.push('scene LIKE ?')
+    params.push(`%${opts.scene}%`)
   }
   if (opts.character === UNKNOWN_CHARACTER) {
     where.push(EMPTY_TEXT('character'))
@@ -229,7 +234,7 @@ export function queryItems(index, opts = {}) {
       : opts.sort === 'name' ? 'COALESCE(name, md5) ASC'
         : opts.sort === 'oldest' ? 'created_at ASC'
           : 'created_at DESC'
-  const limit = Math.max(1, Math.min(200, Number(opts.limit) || 10))
+  const limit = Math.max(1, Math.min(500, Number(opts.limit) || 10))
   const offset = Math.max(0, Number(opts.offset) || 0)
 
   const total = Number(index.prepare(`SELECT COUNT(*) AS n FROM items ${w}`).get(...params)?.n || 0)

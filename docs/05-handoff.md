@@ -8,10 +8,11 @@
 ## 0. 复核快照（每次新会话先看这节）
 
 ```
-node --test "test/**/*.test.js"   → 97 pass / 0 fail
+node --test "test/**/*.test.js"   → 115 pass / 0 fail
 node scripts/verify.mjs           → 275 文件 / 275 记录 / 孤儿 0 / 缺文件 0 / 重复对 0
 GET :<port>/meme-brain/api?op=list   → 200，total=275      （能返回 = Host 已加载）
-GET :<port>/meme-brain/api?op=facets → 角色分布 26/21/11/7/1，未知角色 209，未分析 3
+GET :<port>/meme-brain/api?op=facets → 角色分布 27/22/11/7/1，未知角色 207，未分析 0
+工具                                 → meme_find / meme_status 出现在 agent 工具表里
 git status                        → clean（当前 HEAD 见 git log）
 ```
 
@@ -35,6 +36,8 @@ git status                        → clean（当前 HEAD 见 git log）
         --character=大肥鱼        按角色筛；未知角色写 --character=__none__
         --todo=unanalyzed|unnamed|notags|nochar   按待办筛
 /meme show <md5前缀>              单张全部字段
+/meme find <整句或关键词> [--q= --character= --emotion= --scene= --limit=6]
+        人话找图：「生气的大肥鱼」会拆成角色+情绪再排序
 /meme dupes                      重复簇
 /meme todo                       待办计数
 /meme tag <md5前缀> [--name= --tags= --character= --unpin]
@@ -77,6 +80,18 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 
 `op=item` 的字段装配在 `src/lib/http.js` 的 `detailItem()` / `parseScore()`。
 
+### AI 工具（M7-a）
+
+`src/lib/tools.js` 注册两个只读工具，DSH 里任何 agent 都能调：
+
+| 工具 | 作用 |
+|---|---|
+| `meme_find` | 找图。`query` 可写整句，「生气的大肥鱼」→ 角色=大肥鱼 + 情绪=生气，按五维距离排序 |
+| `meme_status` | 总量 / 角色分布 / 待办计数 |
+
+**检索判断只有一份**：`src/lib/search.js`。工具、`/meme find` 命令、（将来的）QQ 模块都调它。
+拆解顺序：认情绪词 → 认角色（否则「大肥鱼」只当文字，27 张漏到 4 张）→ 剩余当关键词（名字/标签/**图上文字**/外观）→ 情绪距离排序，名字命中加权。
+
 ---
 
 ## 3. 环境事实
@@ -115,7 +130,7 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | M4 | 最简界面（网格/详情/编辑）+ HTTP | ✅ 已验收 |
 | M5 | 七维分析 + 外观 + 角色注入 | ✅ 已跑全量 |
 | M6 | 角色表 + 检索 | 🔶 75%：表/命令/规范化/`--character` 检索/**人工标注 + pinned 锁定**；**缺** L3 归纳、批量标注 `bulk` |
-| M7 | AI 工具 `meme_find` + cordis 服务 `memeBrain` | ⬜ 未开始 |
+| M7 | AI 工具 `meme_find` + cordis 服务 `memeBrain` | 🔶 **M7-a 已完成**：`meme_find`/`meme_status` + `/meme find`，共用 `search.js`；**M7-b（接进 QQ）未开始** |
 | M8 | QQ 采集接入（中继模块）+ 判重前置 | ⬜ 未开始 |
 | M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 详情页 + M9-b 筛选条/实时标注/锁定 + M9-c 单张分析按钮已完成**；缺批量操作、导入导出 |
 
@@ -195,10 +210,12 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 2. 详情里「保存并下一张」：连续标注时省一次点击
 3. 待办视图里直接内联编辑（不点开抽屉）
 
-**M7 计划**（未开工）：
-- `src/lib/tools.js`：`meme_find` / `meme_annotate` / `meme_dedupe` / `meme_status`
-- `ctx.provide('memeBrain', ...)`：给 Aurabot 用（`check` / `find` / `byMd5` / `status`）
-- 验收：在 QQ 里问「有没有大肥鱼生气的图」→ 她能调工具并发出图；找不到就说没有
+**M7-b 计划（待你点头，会改她的行为）**：
+QQ 里她能自己挑图 —— 写一个 Aurabot 模块（`~/.dsh/plugins-data/aurabot/modules/meme-qq/index.mjs`）：
+- `api.tool()` 挂 `meme_find`（查新库）+ `meme_send`（找到后用 `api.sendImage(chatId, 绝对路径)` 发出去）
+- `api.rule()` 告诉她有这个本事；`api.command({name:'表情'})` 给主人用
+- 数据走 HTTP（`api.dsh.get('webServer').getOrigin()` + `/meme-brain/api`），不走内存服务 —— 守住 ADR-0005
+- 验收：QQ 里说「来张生气的大肥鱼」→ 她真的发一张；说「来张耄耋睡觉的」→ 她说没有
 
 **M8 计划**：Aurabot 加中继模块（判重前置 + upload），关掉 `stickers.collect`。
 

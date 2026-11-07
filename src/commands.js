@@ -8,8 +8,9 @@ import { openDb, findByPrefix } from './lib/db.js'
 import { INDEX_DB, ROOT, LIBRARY, ensureDirs } from './lib/store.js'
 import { doctor } from './lib/doctor.js'
 import { importDirectory, rebuild, repair, backfillMeta } from './lib/pipeline.js'
-import { formatList, formatDetail, formatDupes, formatTodo } from './lib/query.js'
+import { formatList, formatDetail, formatDupes, formatTodo, formatSearch } from './lib/query.js'
 import { annotate } from './lib/annotate.js'
+import { search } from './lib/search.js'
 import { runAnalyze } from './lib/analyze.js'
 import * as characterTable from './lib/characters.js'
 
@@ -22,6 +23,8 @@ const HELP = [
   '        --todo=unanalyzed|unnamed|notags|nochar   按待办筛',
   '        --q=关键词（名字/标签/外观/md5）  --appearance=外观关键词  --sort=newest|size|name',
   '  /meme show <md5前缀>              查看单张全部信息',
+  '  /meme find [--q=词] [--character=角色] [--emotion=情绪] [--scene=场景] [--limit=6]',
+  '        按「人话」找图：情绪会转成五维分数排序，和 AI 工具用的是同一套判断',
   '  /meme dupes                       查看重复簇',
   '  /meme todo                        看待办（未分析 / 未命名 / 疑似重复）',
   '  /meme tag <md5前缀> [--name=] [--tags=] [--character=] [--unpin]',
@@ -270,6 +273,18 @@ function cmdDupes() {
   return withIndex((db) => formatDupes(db))
 }
 
+/** 找人话找图：和 meme_find 工具共用 lib/search.js */
+function cmdFind(args, flags) {
+  const positional = (args || []).join(' ').trim()
+  return withIndex((db) => formatSearch(search(db, {
+    keyword: typeof flags.q === 'string' ? flags.q : (positional || undefined),
+    character: typeof flags.character === 'string' ? flags.character : undefined,
+    emotion: typeof flags.emotion === 'string' ? flags.emotion : undefined,
+    scene: typeof flags.scene === 'string' ? flags.scene : undefined,
+    limit: flags.limit,
+  })))
+}
+
 function cmdTodo() {
   return withIndex((db) => formatTodo(db))
 }
@@ -370,6 +385,9 @@ export async function run(rawInput, ctx) {
         return cmdTag(args, flags)
       case 'dupes':
         return ok(cmdDupes())
+      case 'find':
+      case 'search':
+        return ok(cmdFind(args, flags))
       case 'todo':
         return ok(cmdTodo())
       case 'analyze':
@@ -388,6 +406,8 @@ export async function run(rawInput, ctx) {
         return fail(`未知子命令：${sub}\n\n${HELP}`)
     }
   } catch (error) {
-    return sub === 'list' || sub === 'show' || sub === 'dupes' || sub === 'todo' ? fail(error.message) : fail(`执行失败：${error.message}`)
+    return sub === 'list' || sub === 'show' || sub === 'dupes' || sub === 'todo' || sub === 'find' || sub === 'search'
+      ? fail(error.message)
+      : fail(`执行失败：${error.message}`)
   }
 }

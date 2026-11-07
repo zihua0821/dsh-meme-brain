@@ -57,6 +57,39 @@ export function formatDetail(row) {
   return lines.join('\n')
 }
 
+/**
+ * 检索结果的人话版本。工具与命令共用，保证「她看到的」和「你看到的」一致。
+ */
+export function formatSearch(result) {
+  const { items, total, used } = result
+  const cond = [
+    used.character ? `角色=${used.character}` : '',
+    used.emotion ? `情绪=${used.emotion}` : '',
+    used.keyword ? `关键词=${used.keyword}` : '',
+    used.scene ? `场景=${used.scene}` : '',
+  ].filter(Boolean).join(' ')
+
+  if (!items.length) {
+    return `没找到${cond ? `（${cond}）` : ''}的图。\n可以换个说法，或者先用 /meme list 看看库里有什么。`
+  }
+
+  const lines = [`找到 ${items.length} 张${cond ? `（${cond}）` : ''}，共 ${total} 张匹配：`, '']
+  items.forEach((it, i) => {
+    const s = it.score || {}
+    const bits = []
+    if (typeof s.valence === 'number') bits.push(`情绪${s.valence}`)
+    if (typeof s.arousal === 'number') bits.push(`强度${s.arousal}`)
+    if (typeof s.aggression === 'number') bits.push(`攻击${s.aggression}`)
+    lines.push(`  ${i + 1}. ${it.name || '（未命名）'}${it.character ? ` · ${it.character}` : ''}`)
+    if (bits.length) lines.push(`     ${bits.join(' ')}`)
+    if (it.appearance) lines.push(`     外观：${it.appearance}`)
+    if (it.text) lines.push(`     图上文字：${it.text}`)
+    if (it.tags) lines.push(`     标签：${it.tags}`)
+    lines.push(`     ${short(it.md5)}`)
+  })
+  return lines.join('\n')
+}
+
 /** 重复簇 */
 export function formatDupes(index) {
   const rows = allItems(index)

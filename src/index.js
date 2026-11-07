@@ -7,6 +7,7 @@
 
 import { run } from './commands.js'
 import { registerApi } from './lib/http.js'
+import { registerTools } from './lib/tools.js'
 
 export const name = 'meme-brain'
 export const inject = ['commands', 'webServer', 'llm', 'attachments', 'agentDefaultModel']
@@ -22,11 +23,18 @@ export function apply(ctx) {
   })
   ctx.effect(() => dispose)
 
+  // AI 工具（M7-a）：和命令、HTTP 共用同一个 search.js，不另写判断
+  try {
+    ctx.effect(() => registerTools(ctx))
+  } catch (error) {
+    log.warn?.('工具注册失败（agent 将无法主动查表情库）：', error.message)
+  }
+
   try {
     registerApi(ctx)
   } catch (error) {
     log.warn?.('HTTP 路由注册失败（界面将不可用，命令不受影响）：', error.message)
   }
 
-  log.info?.('meme-brain 已加载（M4：命令 + 界面 + HTTP）')
+  log.info?.('meme-brain 已加载（命令 + 界面 + HTTP + AI 工具）')
 }
