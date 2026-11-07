@@ -147,7 +147,7 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 | **Aurabot 模块** | `%USERPROFILE%\.dsh\plugins-data\aurabot\modules\meme-qq\index.mjs`（名字「表情脑」）。仓库源码在 `integrations/aurabot/meme-qq/`，改完跑 `node scripts/deploy-aurabot.mjs`（Aurabot 3 秒热加载） |
 | GUI 端口 | 每次重启会变（当前见运行时 context / `ctx.webServer.getOrigin()`） |
 | dsh CLI | `F:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
-| **PowerShell** | 工具默认的 `pwsh` 其实是 **Windows PowerShell 5.1**（`powershell.exe`）。本机另装了 **PowerShell 7.6.9**，是 Store 的应用执行别名：`& "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"`（`where pwsh` 看不见它，必须用全路径）。**要读写中文文件、发中文 JSON，用 PS7 或 node** |
+| **PowerShell** | **工具里的 `pwsh` 已是 PowerShell 7.6.9**（由 profile 补丁把 `pwsh-sandbox.pwshPath` 指到 `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`）。改之前默认是 5.1，读/写中文都会坏。**别再按 5.1 的行为写脚本**：`Get-Content`/`Set-Content` 默认 UTF-8，`Invoke-WebRequest` 发中文正常 |
 | 依赖 | 只有 `sharp`（原生，libvips 8.18.7） |
 
 ### 改完代码怎么生效
@@ -160,6 +160,22 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 ```
 
 > 已实测：关/开即可重新加载 Host 代码，不需要重启 DSH。
+
+### 全 DSH 的环境补丁（profile 层）
+
+`%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 里加了一条，让**所有会话的 `pwsh` 工具**都用 PowerShell 7：
+
+```yaml
+- id: pwsh-sandbox
+  name: "@deepseek-ai/dsh-pwsh-sandbox"
+  config:
+    pwshPath: C:\Users\zihua\AppData\Local\Microsoft\WindowsApps\pwsh.exe
+```
+
+- **为什么**：默认是 Windows PowerShell 5.1，读 UTF-8 中文会乱码、发中文 JSON 会变 `?`
+- **生效方式**：保存即生效（Loader 热应用），不用重启 DSH —— 已实测
+- **退回**：删掉这段，或把 `pwshPath` 改回 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+- **重装 DSH 后要补回来**（profile 目录若被清掉）
 
 ---
 
@@ -220,7 +236,7 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 | 坑 | 事实 |
 |---|---|
 | **BOM 吃数据** | `Set-Content -Encoding utf8` 写 BOM，`JSON.parse` 抛错被静默吞掉 → 角色表被清空过一次。已修：剥 BOM + `lastLoadError` |
-| **别用 5.1 的 PowerShell 改中文文件** | 工具里的 `pwsh` 是 **PowerShell 5.1**：`Get-Content -Raw` 按 GBK 读 UTF-8 文件 → `Set-Content` 写回后整篇中文变乱码（`docs/04-acceptance.md` 中过一次，靠 `git checkout --` 救回）。**三条安全路径**：① 用编辑工具（read/write/edit）；② 用 node 读写；③ 用 **PS7** `& "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe" -File 脚本.ps1`（实测 7.6.9，读 UTF-8 正常） |
+| **~~别用 5.1 的 PowerShell 改中文文件~~** | 已从根上解决：profile 补丁让 `pwsh` 工具直接跑 PowerShell 7.6.9。历史：5.1 的 `Get-Content -Raw` 按 GBK 读 UTF-8 → 写回整篇乱码（`docs/04-acceptance.md` 中过一次，靠 `git checkout --` 救回）。**若哪天重装 DSH 后补丁丢了**，重新加 `pwsh-sandbox.pwshPath` 即可（见 §3） |
 | `maxTokens: 2000` 太小 | 4 张图 × 13 字段会被截断（8 次失败）。已改 4000 |
 | 角色名带标注 | 提示词里写「龙图（梗模板）」，模型原样抄回 → 存成 `龙图（梗模板）`。已修：`normalizeName()` 剥括号、认别名、查表 |
 | `--force` 会覆盖名字 | 已拆开：`--force` 只重跑分数，`--rename` 才改名 |
@@ -233,7 +249,7 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 | WebP | sharp 支持，旧方案（gifuct/pngjs）不支持 |
 | **`api.setConfig` 是深合并** | Aurabot 模块里要**删键**必须传函数形式 `api.setConfig(cfg => 新cfg)`（整份替换）；传对象删不掉，`forkedFrom` 因此残留过一次 |
 | **别拿文件名当证据** | QQ 给所有图片都起 `<32位md5>.jpg` 这种名字。按文件名判「是不是表情」→ 收进了两张游戏截图。判定要基于字节（是不是动图）或 QQ 的 `sub_type` |
-| **5.1 发中文会变问号** | `Invoke-WebRequest -Body $中文`（PS 5.1）按 Latin-1 编码，服务端收到一串 `?`，写进库就是坏数据（实测把一条的外观写成了问号）。**PS7 已实测正常**（`-ContentType 'application/json; charset=utf-8'`，中文往返无碍）；不想切 PS7 就用 node 的 `fetch` 或 `/meme tag` 命令 |
+| **~~5.1 发中文会变问号~~** | 同样已从根上解决（pwsh 工具改跑 PS7）。历史：`Invoke-WebRequest -Body $中文`（PS 5.1）按 Latin-1 编码 → 服务端收到一串 `?`，实测把一条的外观写成问号（用 node 修回）。现在 PS7 下中文往返正常，已实测 |
 | **面板页签是写死的** | `TAB_MODS = { stickers: ['stickers'] }`：只有内置 stickers 模块在跑，「表达 → 表情包」页才存在；自定义模块页只能落「平台/系统」两组 |
 | **存图和回复要分开** | 早期版本让「存图」触发 `saveSignal`，删掉她这轮文字强塞表情。用户指出这是错的：存表情和回应是**两条并行互不干扰的路**，硬设「回」或「不回」都不对 |
 
