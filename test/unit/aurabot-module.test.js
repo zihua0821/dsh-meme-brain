@@ -139,11 +139,12 @@ async function load(apiOver, settingOver) {
   return { mod, svc, ...ctx }
 }
 
-test('模块定义：独立 id + 参数全在本模块', async () => {
+test('模块定义：正式名字 + 参数在本模块 + 挂在「表达」的表情包页', async () => {
   const mod = (await import(MODULE.href + '?t=' + Math.random())).default
   assert.equal(mod.id, 'meme-qq', 'id 必须独立；叫 stickers 就成了顶掉内置')
+  assert.equal(mod.name, '统一表情库', '正式名字')
   assert.equal(typeof mod.setup, 'function')
-  assert.equal(mod.tab, undefined, '不挂在「表情包」页签下，改成自己的页，免得随内置模块残破')
+  assert.equal(mod.tab, 'stickers', '「表情包」页签在「表达」下，挂上去参数才落在表达里')
   const keys = (mod.settings || []).map((s) => s.key).sort()
   assert.deepEqual(keys, [
     'autoChance', 'caption', 'collect', 'collectMode', 'enabled', 'faces',

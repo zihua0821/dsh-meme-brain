@@ -68,12 +68,13 @@ const DEFAULTS = {
 
 export default {
   id: 'meme-qq',
-  name: '表情包（新库）',
-  version: '3.0.0',
+  name: '统一表情库',
+  version: '3.1.0',
   api: 1,
-  description: '统一表情库：发表情、找图、收表情都在这里。参数只此一处，内置表情模块保持停用。',
-  // 故意不写 tab：参数放进「扩展」里本模块自己的页，
-  // 不依赖内置那个「表情包」页（它随内置模块停用而残破）
+  description: '她唯一的表情库：发表情、找图、收表情都走这里。参数在本页底部，内置表情模块保持停用。',
+  // 面板的分组是写死的：模块自己的页默认落「系统」；挂在内置页签下才会跟着页签走。
+  // 「表情包」页签在「表达」下，所以挂上去——参数就出现在「表达 → 表情包」底部。
+  tab: 'stickers',
   defaults: DEFAULTS,
   settings: [
     { key: 'enabled', label: '发表情', type: 'switch', hint: '关掉她就不发表情（也不解析回复里的 <sticker:…>），但收表情不受影响' },
@@ -123,6 +124,11 @@ export default {
           collectMode: s.collectMode || 'auto',
           fromGroups: s.fromGroups !== false,
           fromPrivate: s.fromPrivate !== false,
+          // 这三个在「表达 → 表情包」页上还留着旧卡片，镜过去让数字和本页一致；
+          // 在旧卡片上改也会被下一次镜像覆盖回来（那儿已经不是真相了）
+          autoChance: Number(s.autoChance ?? 0.35),
+          maxPerHour: Number(s.maxPerHour ?? 20),
+          caption: s.caption !== false,
         }
         if (JSON.stringify(cur) !== JSON.stringify(next)) {
           api.setConfig({ ...cfg, stickers: next })
@@ -793,7 +799,7 @@ export default {
       },
     })
 
-    log.info('表情包（新库）已就绪（参数在本模块设置里，内置表情模块已停用）')
+    log.info('统一表情库已就绪（参数在本页底部，内置表情模块已停用）')
 
     return { refresh, find, status: statusRemote, addFromBuffer, rename }
   },

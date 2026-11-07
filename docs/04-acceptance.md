@@ -754,12 +754,14 @@ GET  /meme-brain/api?op=find&q=&character=&emotion=&limit=
 
 ### 参数怎么对应（重要）
 
-内置模块**没有自己的设置表单**，参数原来全在 `config.stickers`（面板「表情包」页）。那个页随内置模块停用而残破，所以现在**参数搬到 `meme-qq` 自己的设置页**（面板「扩展」→ 表情包（新库））。
+模块正式名字：**统一表情库**（id `meme-qq`）。参数在 **「表达 → 表情包」页的底部**（模块挂在 `stickers` 页签下；面板的分组是写死的，模块自己的页会落到「系统」，只有挂到内置页签才会跟着页签走）。
 
 一份真相 + 一处镜像：
 
 - **真相** = `ext['meme-qq']`（本模块设置，11 项）
-- **镜像** = `config.stickers` 里 hub 还认的几个字段（`enabled` 恒 false、`faces`、`collect`、`collectMode`、`fromGroups`、`fromPrivate`）。hub 不看模块设置，不镜像就会出现「设置关了、hub 仍给她轻提示」这种不一致
+- **镜像** = `config.stickers`（`enabled` 恒 false；`faces`/`collect`/`collectMode`/`fromGroups`/`fromPrivate`/`autoChance`/`maxPerHour`/`caption` 与设置同步）。hub 不看模块设置，不镜像就会出现「设置关了、hub 仍给她轻提示」这种不一致；同时让旧卡片上的数字和本页一致
+
+**代价（要知道）**：「表达 → 表情包」页上方还留着内置的两张旧卡片——上面的开关改不动（会被镜像覆盖），下面的「表情库」卡片会一直显示「加载中…」（接口随内置模块停用而 404）。**改参数请用页面底部本模块那组。**
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
@@ -774,14 +776,14 @@ GET  /meme-brain/api?op=find&q=&character=&emotion=&limit=
 | 发送上限 `maxSendMB` | 5 | 超了不发（会被网关拒），269/275 张在 5MB 内 |
 | 夹 QQ 小黄脸 `faces` | 开 | 不是本库功能，但面板页挪走后只有这里能改 |
 
-**删掉的**：`maxLibrary`（自动删最少用的图 = 数据损失，新库不做淘汰）、v1/v2 自造的 `autoPick`/`ownerImages`（前者等于 `autoChance=0`，后者用「存一下这个表情」手动存）。
+**删掉的**：`maxLibrary`（自动删最少用的图 = 数据损失，新库不做淘汰）、v1/v2 自造的 `autoPick`/`ownerImages`。
 
-**旧设置会自动迁过来**：模块启动时若发现 v1/v2 的遗留键（`autoPick`/`autoAnalyze`/`ownerImages`），先把当初在内置面板里设过的值（`autoChance`/`maxPerHour`/`caption`/`faces`/`collect`/`collectMode`/`fromGroups`/`fromPrivate`）搬进来，再删掉遗留键。
+**旧设置会自动迁过来**：模块启动时若发现 v1/v2 的遗留键（`autoPick`/`autoAnalyze`/`ownerImages`），先把当初在内置面板里设过的值搬进来，再删掉遗留键。
 ⚠️ `api.setConfig(patch)` 是**深合并**，删键必须用函数形式（整份替换）——这里踩过两次。
 
 ### 一个已知的界面残缺
 
-内置模块注册的接口（`/ext/stickers/stickers`、`/sticker/upload`、`/sticker/import-qq`、改名/删除）在它停用后全部 404，所以**Aurabot 面板「表情包」页下面那张「表情库」卡片会显示空/失败**。接口路径按模块 id 分组，`meme-qq` 没法冒名接住。
+内置模块注册的接口（`/ext/stickers/stickers`、`/sticker/upload`、`/sticker/import-qq`、改名/删除）在它停用后全部 404，所以「表情库」卡片会一直显示「加载中…」。接口路径按模块 id 分组，`meme-qq` 没法冒名接住。
 
 替代办法：**用 DSH 侧栏「表情包」界面管库**（筛选、改名字/标签/角色、单张分析都在那儿），它管的是同一个库。**已决定不处理这张卡片。**
 
