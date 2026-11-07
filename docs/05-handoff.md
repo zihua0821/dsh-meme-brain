@@ -1,4 +1,4 @@
-# 上下文交接（2026-11-07 起稿，17:55 复核）
+# 上下文交接（2026-11-07 起稿，19:30 复核）
 
 > 用途：上下文压缩/换会话后，读这一份就能继续干。
 > 权威顺序：`docs/` 里的设计文档 > 本文 > 代码注释。
@@ -8,21 +8,22 @@
 ## 0. 复核快照（每次新会话先看这节）
 
 ```
-node --test "test/**/*.test.js"   → 115 pass / 0 fail
-node scripts/verify.mjs           → 275 文件 / 275 记录 / 孤儿 0 / 缺文件 0 / 重复对 0
-GET :<port>/meme-brain/api?op=list   → 200，total=275      （能返回 = Host 已加载）
-GET :<port>/meme-brain/api?op=facets → 角色分布 27/22/11/7/1，未知角色 207，未分析 0
-工具                                 → meme_find / meme_status 出现在 agent 工具表里
-git status                        → clean（当前 HEAD 见 git log）
+node --test "test/**/*.test.js"      → 151 pass / 0 fail
+node scripts/verify.mjs              → 281 文件 / 281 记录 / 孤儿 0 / 缺文件 0 / 重复对 0
+GET :<port>/meme-brain/api?op=facets → 角色分布 大肥鱼27 / 龙图22 / 耄耋13 / doro7 / ggbond1
+                                       未知角色 211 · 未分析 0 · 无标签 61 · 人工锁定 1
+AI 工具                              → meme_find / meme_status 出现在 agent 工具表里
+Aurabot                              → 模块「表情脑」在跑；「表情包」（内置）已停
+git status                           → clean（当前 HEAD 见 git log）
 ```
 
-指标与下表一致：275 / 272 已分析 / 266 有外观 / 66 有角色 / schema v3 / 角色表 6 条。
+指标与下表一致：281 张 / 281 已分析 / 275 有外观 / 70 有角色 / schema v3 / 角色表 6 条。
 
 ---
 
 ## 1. 一句话现状
 
-表情包管理系统已经能**收图入库、判重、分析、检索、看界面**（M0–M5 完成）；**还差 M7 让她在 QQ 里选图、M8 让 QQ 的图自动进来、M9 完整界面与导入导出**。
+**库、分析、检索、界面、AI 工具、QQ 收发表情全部打通**（M0–M5、M7、M8 完成）。剩下的是**批量标注**（211 张未知角色）、**导入导出/备份**、以及 M9 的界面收尾。
 
 ---
 
@@ -42,6 +43,7 @@ git status                        → clean（当前 HEAD 见 git log）
 /meme todo                       待办计数
 /meme tag <md5前缀> [--name= --tags= --character= --unpin]
         人工标注：填新角色会自动建表项；改角色会上锁；--unpin 解锁
+/meme rm <md5前缀> [--yes]        删除（文件移到 trash/，不加 --yes 只预览）
 /meme import <目录> [--dry-run]   导入（判重前置）
 /meme backfill <源目录> [--force] 从源库 index.json 回填名字/标签
 /meme analyze [--limit=N] [--force] [--rename] [--include-pinned] [--md5=] [--appearance=] [--name=] [--batch=4]
@@ -71,9 +73,11 @@ DSH 侧栏「表情包」图标 → 主区：筛选条 + 网格 + 详情抽屉�
 GET  /meme-brain/api?op=list&limit=&offset=&q=&state=&sort=&character=&todo=
 GET  /meme-brain/api?op=item&md5=<前缀>          → 全部分析字段（detailItem）
 GET  /meme-brain/api?op=facets                   → 筛选条计数（角色分布/待办/锁定数）
+GET  /meme-brain/api?op=find&q=&character=&emotion=&scene=&limit=  → 人话检索（和工具同一套）
 GET  /meme-brain/api?op=image&md5=<前缀>        → 二进制
 POST /meme-brain/api?op=annotate  {md5,name?,tags?,character?,pin?}
 POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，串行，锁定则 skipped）
+POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库（QQ 补录用）
 ```
 
 标注规则（`src/lib/annotate.js`）：填角色 → 写角色表（没有就新建，出处 `ui`）+ `pinned=1` + 把握标 `人工`；清空角色 → 解锁交还模型；`pin:false` → 解锁。**只有改角色才上锁**，改名字/标签不动锁定状态。
@@ -103,8 +107,15 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | 原来的路 | 现在 |
 |---|---|
 | `<sticker:标签>` → hub 调内置 `match` | `reply/items` 里换成我们库里的图 |
-| 自动配表情（`stickers.autoChance`） | `reply/items` 里按概率补一张 |
-| 偷表情（hub 调内置 `collect`） | 自己的 `message` 监听（普通表情 + 动图 `sub_type=11`） |
+| 自动配表情（`stickers.autoChance`） | `reply/items` 里按本模块概率补一张 |
+| 偷表情（hub 调内置 `collect`） | 自己的 `message` 监听 |
+
+**收表情的判定（只用确凿证据，不猜文件名）**：
+1. 字节是真动图（GIF 多帧 / 动 WebP / APNG）→ 收（内置漏掉的就是这类）
+2. QQ 自己标成表情段（`sub_type` = 1 收藏 / 7 大表情 / 11 动图表情）→ 收
+3. 其余（静态 + 没被标记）→ **一律不收**
+
+> 踩过的坑：曾经用「文件名像 `<32位md5>.jpg` 就当表情」，而 QQ 给所有图片都起这种名字 → 收进了两张游戏截图。
 
 - 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
 - **存图与回应是两条独立的路（原则）**：存图是后台动作，绝不改写她的回复；她想说话就说话、想甩表情就甩表情。工具结果做得极淡（只回一个「好」），规则里只要求「别提存图、别提库」。~~早期版本用 `saveSignal` 删文字强塞表情，已废弃~~
@@ -120,7 +131,7 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 
 **判重只有一份**：`src/lib/pipeline.js` 的 `ingestBuffer()`，目录导入和 `op=add` 共用。
 **回退**：`modules.stickers.enabled = true` + `modules['meme-qq'].enabled = false`。
-**注意**：早期版本曾用同名 id 顶掉内置模块（已废弃），配置里可能残留 `stickers.forkedFrom`，无害。
+**注意**：早期版本曾用同名 id 顶掉内置模块（已废弃），配置里残留的 `stickers.forkedFrom` 已清掉。
 
 ---
 
@@ -132,7 +143,7 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | 插件安装方式 | profile 里是 **link**：`dsh-meme-brain → F:\dsh-meme-brain` |
 | profile | `%USERPROFILE%\.dsh\profiles\desktop` |
 | 数据目录 | `%USERPROFILE%\.dsh\meme-brain\`（library/ + index.db + characters.json + backups/） |
-| **Aurabot 模块** | `%USERPROFILE%\.dsh\plugins-data\aurabot\modules\stickers\index.mjs`（**替换内置表情模块**）。仓库源码在 `integrations/aurabot/stickers/`，改完跑 `node scripts/deploy-aurabot.mjs` |
+| **Aurabot 模块** | `%USERPROFILE%\.dsh\plugins-data\aurabot\modules\meme-qq\index.mjs`（名字「表情脑」）。仓库源码在 `integrations/aurabot/meme-qq/`，改完跑 `node scripts/deploy-aurabot.mjs`（Aurabot 3 秒热加载） |
 | GUI 端口 | 每次重启会变（当前见运行时 context / `ctx.webServer.getOrigin()`） |
 | dsh CLI | `F:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
 | 依赖 | 只有 `sharp`（原生，libvips 8.18.7） |
@@ -161,23 +172,26 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | M4 | 最简界面（网格/详情/编辑）+ HTTP | ✅ 已验收 |
 | M5 | 七维分析 + 外观 + 角色注入 | ✅ 已跑全量 |
 | M6 | 角色表 + 检索 | 🔶 75%：表/命令/规范化/`--character` 检索/**人工标注 + pinned 锁定**；**缺** L3 归纳、批量标注 `bulk` |
-| M7 | AI 工具 `meme_find` + QQ 接入 | ✅ **M7-a**（`meme_find`/`meme_status` + `/meme find`）、**M7-b**（QQ 模块接管表情）都已完成 |
-| M8 | QQ 采集接入 + 判重前置 | ✅ **已并入 M7-b**：`op=add` 走 `ingestBuffer`，动图补录已兼并在新模块里；旧 `gif-stickers` 已自动关闭 |
-| M9 | 完整界面 + 导入导出 + 完整 HTTP | 🔶 **M9-a 详情页 + M9-b 筛选条/实时标注/锁定 + M9-c 单张分析按钮已完成**；缺批量操作、导入导出 |
+| M7 | AI 工具 + QQ 接入 | ✅ **M7-a**（`meme_find`/`meme_status` + `/meme find`）、**M7-b**（QQ 模块「表情脑」接管发表情/收表情/找图）都已完成并实测 |
+| M8 | QQ 采集 + 判重前置 | ✅ 已并入 M7-b：`op=add` 走 `ingestBuffer`；动图补录兼并在新模块；旧 `gif-stickers` 已停用 |
+| M9 | 完整界面 + 导入导出 | 🔶 **M9-a 详情页 / M9-b 筛选条+实时标注+锁定 / M9-c 单张分析按钮** 完成；缺批量操作、导入导出 |
 
 ---
 
-## 5. 数据现状（2026-11-07 17:40）
+## 5. 数据现状（2026-11-07 19:30）
 
 | 项 | 值 |
 |---|---|
-| 新库 | **275 张**，167.7MB，`library/<md5[0:2]>/<md5[2:4]>/<md5>.<ext>` |
-| 已分析 | 271 |
-| 有外观描述 | 265 |
-| 有角色 | **65**（大肥鱼 26 / 龙图 21 / 耄耋 11 / doro 6 / ggbond 1） |
+| 新库 | **281 张**，169.1MB，`library/<md5[0:2]>/<md5[2:4]>/<md5>.<ext>` |
+| 已分析 | **281（全部）** |
+| 有外观描述 | 275（另有 6 张是加 appearance 列之前分析的，重跑一次 `--force` 就齐） |
+| 有角色 | **70**（大肥鱼 27 / 龙图 22 / 耄耋 13 / doro 7 / ggbond 1） |
+| 未知角色 | **211** · 无标签 61 · 人工锁定 1 |
+| QQ 来源 | 6 张（`source=qq`，都是自动收的） |
 | schema | v3（items 有 target / appearance 列） |
 | 角色表 | 6 条：大肥鱼、doro、耄耋、龙图（meme）、ggbond、哆啦A梦 |
-| **Aurabot 旧库** | 磁盘 292 个文件 = **289 个不同 md5**（3 个 md5 各存了 collected-/manual- 两份）。289 − 275 = **14**，是导入时被判重丢掉的近重复 → **两库没有分叉，新库是旧库的干净超集**（2026-11-07 复核） |
+| **Aurabot 旧库** | 290 条索引 / 293 个文件，**已停止写入**（内置模块停用）。注意：18:44 那阵内置被临时打开过，它多收了 1 张 —— 所以是 290 不是 289 |
+| 回收站 | `trash/` 里有 2 张误收的游戏截图（`/meme rm` 删的，可恢复） |
 
 ---
 
@@ -191,6 +205,7 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | `docs/02-architecture.md` | 架构：模块、契约、数据模型、算法 |
 | `docs/03-engineering-contract.md` | **工程契约**：五条保证、设计规则、改动五步验证 |
 | `docs/04-acceptance.md` | **验收手册**：每个里程碑「做什么/怎么验/变化/怎么退」 |
+| `integrations/aurabot/meme-qq/` | Aurabot 模块源码（部署用 `node scripts/deploy-aurabot.mjs`） |
 
 代码：`src/index.js`（Host 入口）、`src/commands.js`（命令分发）、`src/client.js`（界面）、
 `src/lib/{parse,dhash,dedupe,store,db,pipeline,query,analyze,characters,http,doctor}.js`、
@@ -214,36 +229,41 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 | 透明必须合成白底 | 不合成时 dHash 最多偏 27 位 |
 | 判重阈值 | 真重复距离 0，非重复最近 11；阈值 avg≤4 且 max≤8 |
 | WebP | sharp 支持，旧方案（gifuct/pngjs）不支持 |
+| **`api.setConfig` 是深合并** | Aurabot 模块里要**删键**必须传函数形式 `api.setConfig(cfg => 新cfg)`（整份替换）；传对象删不掉，`forkedFrom` 因此残留过一次 |
+| **别拿文件名当证据** | QQ 给所有图片都起 `<32位md5>.jpg` 这种名字。按文件名判「是不是表情」→ 收进了两张游戏截图。判定要基于字节（是不是动图）或 QQ 的 `sub_type` |
+| **面板页签是写死的** | `TAB_MODS = { stickers: ['stickers'] }`：只有内置 stickers 模块在跑，「表达 → 表情包」页才存在；自定义模块页只能落「平台/系统」两组 |
+| **存图和回复要分开** | 早期版本让「存图」触发 `saveSignal`，删掉她这轮文字强塞表情。用户指出这是错的：存表情和回应是**两条并行互不干扰的路**，硬设「回」或「不回」都不对 |
 
 ---
 
 ## 8. 已知问题
 
-1. **旧库不再写入，但还留着**：Aurabot 侧 289 个不同 md5（`plugins-data/aurabot/stickers/`），内置模块停用后不再增长，现在只当备份。要不要删，等你定
+1. **旧库还留着**：Aurabot 侧 290 条索引 / 293 个文件（`plugins-data/aurabot/stickers/`），内置模块停用后不再增长。**18:44 那阵内置被临时打开过，它多收了 1 张**。要不要删，等你定
 2. `大肥鱼飞起`、`惬意doro` 没被认出来（描述偏向女仆装/玫瑰饰）
 3. `ggbond` 只有 1 张，样本太少
-4. **209 张未知角色**、57 张无标签——角色表只有 6 条；它们已分析过，重跑要 `--force`
-5. 没有批量标注（`bulk`）：现在只能一张一张点
-6. 界面只能**单张**触发分析；筛选条不含「疑似重复」（要算 dHash 聚类，代价高）
-7. ~~没有 `pinned`~~ → 已实现（改角色上锁，`analyze` 跳过，`--include-pinned` 放行）
-8. **Aurabot 面板「表情库」卡片失效**：内置模块注册的 `/ext/stickers/...` 接口随停用而 404。**已决定不处理**（管库统一用 DSH 侧栏「表情包」界面）
-9. 动画商城表情（`emoji_id`）当普通图发，会掉动画；不再往机器人号 QQ 收藏写 `add_custom_face`
+4. **211 张未知角色**、61 张无标签——角色表只有 6 条；它们已分析过，重跑要 `--force`
+5. **6 张已分析但没外观**（加 appearance 列之前分析的），重跑一次 `--force` 就齐
+6. 没有批量标注（`bulk`）：现在只能一张一张点
+7. 界面只能**单张**触发分析；筛选条不含「疑似重复」（要算 dHash 聚类，代价高）；界面还没有删除按钮（命令有 `/meme rm`）
+8. ~~没有 `pinned`~~ → 已实现（改角色上锁，`analyze` 跳过，`--include-pinned` 放行）
+9. **Aurabot 面板「表情库」卡片失效**：内置模块注册的 `/ext/stickers/...` 接口随停用而 404。**已决定不处理**（管库统一用 DSH 侧栏「表情包」界面）
+10. 动画商城表情（`emoji_id`）当普通图发，会掉动画；不再往机器人号 QQ 收藏写 `add_custom_face`
 
 ---
 
 ## 9. 下一步
 
-**当前状态**：M0–M5、M7、M8 完成；M6 75%（缺 `bulk`、L3 归纳）；M9 部分（详情/筛选/标注/单张分析完成，缺导入导出）。140 项测试全绿。
+**当前状态**：M0–M5、M7、M8 完成；M6 75%（缺 `bulk`、L3 归纳）；M9 部分（详情/筛选/标注/单张分析完成，缺导入导出）。151 项测试全绿。
 
 **候选（按我判断的价值）**：
 
-1. **批量标注 `bulk`**：209 张未知角色，一张一张点不现实。界面框选 + `/meme bulk --todo=nochar --character=X`
-2. **M9 导入导出**：277 张只有这一份，现在只备份索引不打包图片
-3. **角色归纳（L3）**：外观聚类提议「这几张可能是同一个人」，人工确认后批量打标（依赖 `bulk` 的落地范围）
-4. 小尾巴：6 张无外观、2 张认错、`ggbond` 样本少、界面「疑似重复」筛
-5. QQ 侧打磨：挑图准不准、频率、要不要恢复 QQ 收藏
+1. **批量标注 `bulk`**：211 张未知角色，一张一张点不现实。界面框选 + `/meme bulk --todo=nochar --character=X`
+2. **M9 导入导出**：281 张只有这一份，现在只备份索引不打包图片
+3. **角色归纳（L3）**：外观聚类提议「这几张可能是同一个人」，人工确认后批量打标（依赖 `bulk`）
+4. 小尾巴：6 张无外观、2 张认错、`ggbond` 样本少、界面「疑似重复」筛、界面删除按钮
+5. QQ 侧观察：挑图准不准、会不会太频繁、看图起名的质量
 
-**等你拍板**：旧库 289 张是留还是删（占 169MB）。
+**等你拍板**：旧库 290 条是留还是删（占 169MB）。
 
 ---
 
@@ -262,4 +282,4 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 2. 读 `docs/04-acceptance.md`（知道每个里程碑怎么验）和本文
 3. 跑 `/meme doctor` 看系统是否健康
 4. 跑 `node --test "test/**/*.test.js"` 确认代码没坏
-5. 继续 M7，或先处理第 8 节的已知问题
+5. 继续 M6（`bulk`）或 M9（导入导出），或先处理第 8 节的已知问题
