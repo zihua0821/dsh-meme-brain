@@ -716,38 +716,41 @@ git revert --no-edit <本次提交>
 
 ---
 
-## M7-b / M8 · 新库接管 QQ 表情（替换内置 + 兼并补录）✅
+## M7-b / M8 · 新库接管 QQ 表情（独立模块 · 内置只停用）✅
 
 **① 做什么**
 
-内置表情模块（`stickers`）用的是它自己的 `index.json` 库。这一版把它**整个换掉**：Aurabot 的模块规则是「同名用户模块顶掉内置模块」，所以我们写了一个 id 也叫 `stickers` 的模块，让聊天中枢找表情时找到新库。
+内置表情模块用的是它自己的 `index.json` 库。这一版让**新库接管她的表情行为**，但**不顶掉内置模块**：
 
-| 原来 | 现在 |
+| | 做法 |
 |---|---|
-| 内置 `index.json` 库（289 张，无角色无分数） | `~/.dsh/meme-brain`（275 张，带角色/情绪/图上文字） |
-| 内置 `stickers` 模块 | `modules/stickers/index.mjs`（仓库里在 `integrations/aurabot/stickers/`） |
-| 旧的 `gif-stickers` 补录模块 | 逻辑并进新模块，旧模块**自动关闭** |
-| 只有 `qq_send_sticker` 等 3 个工具 | 多两个真正懂内容的：`meme_find`（找）、`meme_send`（找到就发） |
+| 内置 `stickers` 模块 | **代码原样留在插件里**，只在配置里停用（`modules.stickers.enabled = false`）。插件升级照常，想退回只改这一个开关 |
+| 新模块 | 独立 id **`meme-qq`**（`integrations/aurabot/meme-qq/`），不跟任何模块重名 |
+| 旧的 `gif-stickers` 补录 | 逻辑并进 `meme-qq`，模块同样只停用不删 |
 
-新模块向聊天中枢提供它要的六个函数（少一个她就完全不会发表情）：
+内置停用后，她原来靠内置模块做的三件事由 `meme-qq` 接住：
 
-```
-match(名字)  segmentFor(item)  pickForReply(回复文字)  collect(表情段)  library()  markUsed(md5)
-```
+| 原来的路 | 现在 |
+|---|---|
+| `<sticker:标签>` → hub 调内置 `match` | `reply/items` 事件里换成我们库里的图（找不到就丢掉，和内置行为一致） |
+| 自动配表情（`stickers.autoChance`） | `reply/items` 里按概率补一张，概率读原配置或模块设置 |
+| 偷表情（hub 调内置 `collect`） | 自己的 `message` 监听：普通表情 + 动图（`sub_type=11`）都收 |
+
+工具：`meme_find` / `meme_send` / `qq_send_sticker` / `qq_list_stickers` / `qq_edit_sticker` / `qq_collect_sticker` / `qq_save_sticker`。命令：`/表情 <关键词>`。
 
 **顺带补的两条 Host 接口**（模块靠它们工作）：
 
 ```
 POST /meme-brain/api?op=add&source=qq    body = 图片原始字节
      判重走 lib/pipeline.js 的 ingestBuffer —— 和目录导入是同一份规则
-     → { added, md5, near?, item? }     重复时 added:false 并说明原因
 GET  /meme-brain/api?op=find&q=&character=&emotion=&limit=
 ```
 
-**两个设计决定**：
+**三个设计决定**：
 
-1. **判重逻辑抽成了 `ingestBuffer()`**：QQ 补录、目录导入、以后任何入口都调它。之前目录导入自己写了一份循环，等于两份判重规则，迟早给出不同答案。
-2. **发送体积闸门 `maxSendMB`（默认 5MB）**：库里最大那张 9.7MB，base64 后 13MB，发出去会被网关拒。现在 269/275 张可发，`pickForReply` 也只从可发的里挑——**宁可少发一张，也不要她"发了个空的"**。
+1. **判重只有一份**：`ingestBuffer()`，目录导入和 `op=add` 共用。
+2. **发送体积闸门 `maxSendMB`（默认 5MB）**：库里最大那张 9.7MB，base64 后 13MB，会被网关拒。269/275 张可发，自动配表情只从可发的里挑。
+3. **不冒充内置**：一开始我用同名 id 顶掉了内置模块，用户指出这样不好——内置应该留着、只停用。现在 `meme-qq` 完全独立，代价是上面那三条行为要自己实现（已实现并有测试）。
 
 **② 怎么验**
 
@@ -823,21 +826,24 @@ node --test "test/**/*.test.js"
 
 **④ 怎么退**
 
-三个层次，从轻到重：
+两层，都是一句话：
 
 ```
-# 1. 只用回内置表情模块（库还是旧的，她的行为立刻复原）
-#    面板「扩展」页把 stickers 切回内置，或改 config.json：
-#    modules.stickers.useBuiltin = true
+1. 退回内置表情模块（她的行为立刻复原，新库里的图都还在）：
+   面板「扩展」页把 stickers 打开，或 modules.stickers.enabled = true
+   同时把 meme-qq 关掉（面板里关，或 modules['meme-qq'].enabled = false）
 
-# 2. 恢复旧的补录模块
-#    面板「扩展」页打开 gif-stickers，或 modules['gif-stickers'].enabled = true
-
-# 3. 整个不要这个模块
-#    删掉 ~/.dsh/plugins-data/aurabot/modules/stickers/ 文件夹（3 秒内自动退回内置）
+2. 想同时恢复旧的动图补收：
+   modules['gif-stickers'].enabled = true
 ```
 
-新模块只写两处：配置里的 `modules['gif-stickers'].enabled = false`（一次性），以及通过 `op=add` 往新库加图。**没有任何一步改旧库**，所以退回去时旧库原样还在。
+`meme-qq` 只写两处：配置里的 `enabled=false`（一次性，只动 enabled 字段），以及通过 `op=add` 往新库加图。**内置模块的代码、旧库 index.json 都没被碰过。**
+
+部署与回滚命令：
+
+```
+node scripts/deploy-aurabot.mjs          # 把仓库里的 modules/ 部署到 Aurabot（3 秒热加载）
+```
 
 ### 第一次真实使用暴露的两个问题（已修）
 

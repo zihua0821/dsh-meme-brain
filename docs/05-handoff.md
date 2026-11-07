@@ -94,18 +94,27 @@ POST /meme-brain/api?op=analyze   {md5}          → 单张分析（3~6 秒，�
 
 ### Aurabot 模块（M7-b / M8，已在跑）
 
-`integrations/aurabot/stickers/index.mjs` → 部署到 `modules/stickers/index.mjs`。
-**id 故意叫 `stickers`**：插件 core/modules.js 的 `wanted()` 规则是「同名用户模块顶掉内置模块」。
+`integrations/aurabot/meme-qq/index.mjs` → 部署到 `modules/meme-qq/index.mjs`。
+**独立模块**：id 是 `meme-qq`，不冒充内置。内置 `stickers` 模块**代码原样保留、只在配置里停用**
+（`modules.stickers.enabled = false`，想退回把它改 true 并关掉 meme-qq）。
 
-- 向 hub 提供 `match / segmentFor / pickForReply / collect / library / markUsed`
-- 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`
+内置停用后由它接住三条路：
+
+| 原来的路 | 现在 |
+|---|---|
+| `<sticker:标签>` → hub 调内置 `match` | `reply/items` 里换成我们库里的图 |
+| 自动配表情（`stickers.autoChance`） | `reply/items` 里按概率补一张 |
+| 偷表情（hub 调内置 `collect`） | 自己的 `message` 监听（普通表情 + 动图 `sub_type=11`） |
+
+- 工具：`meme_find`、`meme_send`、`qq_send_sticker`、`qq_list_stickers`、`qq_edit_sticker`、`qq_collect_sticker`、`qq_save_sticker`
 - 命令：`/表情 <关键词>`
-- 补录：吸收旧的 `gif-stickers`（`sub_type=11` 动图、`get_image` 换 rkey、动图判定），启动时把旧模块自动关掉
-- 发送闸门：`maxSendMB` 默认 5MB（库 269/275 可发）；`pickForReply` 只挑可发的
+- 发送闸门：`maxSendMB` 默认 5MB（269/275 可发）
 - 数据全走 HTTP（`op=list` / `op=find` / `op=add` / `op=analyze` / `op=annotate`）
+- 模块读 `DSH_MEME_BRAIN_ROOT` 环境变量（和主项目一致），测试里用它指向临时目录
 
 **判重只有一份**：`src/lib/pipeline.js` 的 `ingestBuffer()`，目录导入和 `op=add` 共用。
-**回退**：`modules.stickers.useBuiltin = true`（回内置）、`modules['gif-stickers'].enabled = true`（回旧补录）、删模块文件夹（彻底）。
+**回退**：`modules.stickers.enabled = true` + `modules['meme-qq'].enabled = false`。
+**注意**：早期版本曾用同名 id 顶掉内置模块（已废弃），配置里可能残留 `stickers.forkedFrom`，无害。
 
 ---
 
