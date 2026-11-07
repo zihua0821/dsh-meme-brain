@@ -33,8 +33,12 @@ after(() => {
 function fakeApi(over = {}) {
   const config = { stickers: { enabled: true, collect: true }, ownerQQ: '1', modules: { 'gif-stickers': { enabled: true } } }
   const sets = []
+  const handlers = {}
+  const toolFactories = []
   return {
     configWatcher: { config, sets },
+    handlers,
+    toolFactories,
     api: {
       log: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
       dsh: { get: (n) => (n === 'webServer' ? { getOrigin: () => 'http://stub' } : undefined) },
@@ -42,9 +46,16 @@ function fakeApi(over = {}) {
       config: () => config,
       setConfig: (next) => { sets.push(next); Object.keys(next).forEach((k) => { config[k] = next[k] }) },
       settings: () => ({ auto: true, groups: true, ownerImages: false, maxPerHour: 30, maxMB: 8, maxSendMB: 5, autoAnalyze: false }),
-      defineTool: (t) => t,
-      tool: () => {},
-      on: () => {},
+      // 和插件真身的 defineTool 对齐：它负责把 properties/required 包装成 parameters
+      defineTool: ({ name, description, properties = {}, required = [], execute }) => ({
+        name,
+        description,
+        parameters: { type: 'object', properties, required, additionalProperties: false },
+        output: { schema: { type: 'object' }, render: (_a, v) => [{ type: 'text', text: (v && (v.message || (v.ok === false ? '✗' : '✓'))) || '' }] },
+        execute: async (args) => execute(args || {}),
+      }),
+      tool: (fn) => { toolFactories.push(fn) },
+      on: (name, fn) => { handlers[name] = fn },
       rule: () => {},
       command: () => {},
       sendImage: async () => true,
@@ -54,11 +65,11 @@ function fakeApi(over = {}) {
 }
 
 async function load(apiOver) {
-  const { api, configWatcher } = fakeApi(apiOver)
+  const { api, configWatcher, handlers, toolFactories } = fakeApi(apiOver)
   const mod = (await import(MODULE.href + '?t=' + Math.random())).default
   const svc = mod.setup(api)
   await svc.refresh()
-  return { mod, svc, configWatcher }
+  return { mod, svc, configWatcher, handlers, toolFactories }
 }
 
 test('模块定义：id 必须是 stickers（同名才顶得掉内置）', async () => {
@@ -149,4 +160,57 @@ test('兼并旧模块：已经关着就不再写', async () => {
     config: () => ({ stickers: { enabled: true }, ownerQQ: '1', modules: { 'gif-stickers': { enabled: false } } }),
   })
   assert.equal(configWatcher.sets.length, 0)
+})
+
+test('工具名单：内置模块里被点名的工具名字还在（qq_collect_sticker 是 hub 提示词写死的）', async () => {
+  const { toolFactories } = await load()
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+  const names = made.map((t) => t.name)
+  for (const must of ['qq_send_sticker', 'qq_list_stickers', 'qq_edit_sticker', 'qq_collect_sticker', 'qq_save_sticker', 'meme_find', 'meme_send']) {
+    assert.ok(names.includes(must), `缺 ${must}：她按提示词调用时会拿到「未知工具」`)
+  }
+  for (const t of made) {
+    assert.ok(t.description && t.description.length > 8, `${t.name} 的描述太短，模型不知道怎么用`)
+    assert.equal(t.parameters?.type, 'object', `${t.name} 的 parameters 形状不对`)
+  }
+})
+
+test('防重复发：工具发过之后，回复里的 <sticker:> 会被去掉（实测过的 bug）', async () => {
+  const { handlers, toolFactories } = await load()
+  assert.equal(typeof handlers['reply/items'], 'function', '要监听 reply/items')
+
+  const made = toolFactories[0]({ chat: { chatId: 'private:1', kind: 'private' } })
+  const memeSend = made.find((t) => t.name === 'meme_send')
+  assert.ok(memeSend, '有 meme_send 工具')
+
+  // 还没发过：回复里的表情原样保留
+  assert.equal(handlers['reply/items']([{ kind: 'text', value: '好' }, { kind: 'sticker', value: 'x' }], { chatId: 'private:1' }), undefined)
+
+  const r = await memeSend.execute({ query: '大肥鱼' })
+  assert.equal(r.ok, true, '工具应该发成功（hub 桩返回 true）')
+
+  // 发过之后：同一聊天里的表情项被拿掉
+  const kept = handlers['reply/items'](
+    [{ kind: 'text', value: '给你' }, { kind: 'sticker', value: '气鼓鼓的' }],
+    { chatId: 'private:1' },
+  )
+  assert.ok(Array.isArray(kept), '应该返回新的 items 列表')
+  assert.deepEqual(kept.map((i) => i.kind), ['text'], '只留文字，表情去掉')
+
+  // 别的聊天不受影响
+  assert.equal(handlers['reply/items']([{ kind: 'sticker', value: 'y' }], { chatId: 'group:2' }), undefined)
+
+  // 只用一次：第二次不再干预
+  assert.equal(handlers['reply/items']([{ kind: 'sticker', value: 'z' }], { chatId: 'private:1' }), undefined)
+})
+
+test('防重复发：qq_send_sticker 也算工具发过', async () => {
+  const { handlers, toolFactories } = await load()
+  const made = toolFactories[0]({ chat: { chatId: 'group:9', kind: 'group' } })
+  const tool = made.find((t) => t.name === 'qq_send_sticker')
+  const r = await tool.execute({ name: '开心炫饭' })
+  assert.equal(r.ok, true)
+
+  const kept = handlers['reply/items']([{ kind: 'text', value: '嘿' }, { kind: 'sticker', value: 'x' }], { chatId: 'group:9' })
+  assert.deepEqual(kept.map((i) => i.kind), ['text'])
 })

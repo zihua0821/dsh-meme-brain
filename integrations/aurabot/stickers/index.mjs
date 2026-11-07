@@ -472,10 +472,71 @@ export default {
       return findRemote(p.toString())
     }
 
+    /** 下载一个段再入库，带名字/标签。工具和 collect 共用 */
+    async function collectSeg(seg, opts = {}) {
+      let buf
+      try {
+        buf = await fetchSegment(seg, maxBytes())
+      } catch (error) {
+        return { ok: false, message: '下载失败：' + error.message }
+      }
+      const r = await addFromBuffer(buf, { name: opts.name || '', tags: opts.tags || [], from: opts.from || 'tool' })
+      if (!r.ok) return { ok: false, message: r.existed ? '库里已经有这张了' : (r.reason || '没存成') }
+      return { ok: true, md5: r.item.md5 }
+    }
+
     api.tool(({ chat }) => {
       if (chat.kind === 'system') return []
       const current = chat.chatId
+
+      /**
+       * 工具刚替她发过表情 → 记下来。
+       * 否则她回复里那个 <sticker:…> 会再发一张，同一条消息变成两张图（实测过）。
+       */
+      const noteToolSend = (md5, name) => {
+        lastToolSend = { chatId: current, at: Date.now(), md5: String(md5 || ''), name: String(name || '') }
+        log.info(`工具发了一张表情：${name || md5}（${String(md5).slice(0, 8)}）`)
+      }
+
       return [
+        api.defineTool({
+          name: 'qq_collect_sticker',
+          description: '悄悄把聊天里刚出现的表情收进自己的表情库（喜欢才收，不喜欢就别调）。index 从 1 开始；name 是你给它起的名字。收表情是你自己的小习惯，通常不用跟对方说。',
+          properties: {
+            index: { type: 'integer', description: '第几张表情（从 1 开始，默认 1）' },
+            name: str('给它起的名字（≤12 字）'),
+            tags: { type: 'array', items: { type: 'string' }, description: '标签，如 开心/委屈' },
+          },
+          execute: async ({ index, name, tags }) => {
+            const cfg = api.config().stickers || {}
+            if (!cfg.collect) return { ok: false, message: '偷表情关着' }
+            const seg = hub.stickerOf(current, Number(index) || 1)
+            if (!seg) return { ok: false, message: '这张表情已经拿不到了（超过 30 分钟，或者这一轮里没有这张）' }
+            const r = await collectSeg(seg, { name: String(name || '').slice(0, 12), tags: Array.isArray(tags) ? tags.slice(0, 3) : [], from: current })
+            if (!r.ok) return r
+            return { ok: true, message: `收进库了：「${name || r.md5.slice(0, 8)}」` }
+          },
+        }),
+        api.defineTool({
+          name: 'qq_save_sticker',
+          description: '把这个聊天里刚发来的那张表情包 / 图片收进表情库。主人说「存一下这个表情」「收藏这张」时用。',
+          properties: {
+            name: str('备注（≤12 字，可不填）'),
+            tags: { type: 'array', items: { type: 'string' }, description: '标签，如 开心/委屈（可不填）' },
+          },
+          execute: async ({ name, tags }) => {
+            const recent = typeof hub.recentMedia === 'function' ? hub.recentMedia(current) || [] : []
+            const last = [...recent].reverse().find((x) => x && x.seg)
+            if (!last) return { ok: false, message: '这个聊天里最近没有可以存的图' }
+            const r = await collectSeg(last.seg, {
+              name: String(name || '').slice(0, 12),
+              tags: Array.isArray(tags) ? tags.slice(0, 3) : [],
+              from: 'owner',
+            })
+            if (!r.ok) return r
+            return { ok: true, message: `存好了「${name || r.md5.slice(0, 8)}」` }
+          },
+        }),
         api.defineTool({
           name: 'meme_find',
           description: '在统一表情库里找图（275 张，都带角色/情绪标注）。用户说「来张生气的大肥鱼」「有没有写着无所谓的图」「找张摆烂的」时先用它看看有什么，再把名字告诉对方。找不到就明说没有，不要编。',
@@ -500,6 +561,7 @@ export default {
               if (!r.items.length) return { ok: false, message: '库里没有合适的，别硬发' }
               const item = r.items[0]
               const ok = await hub.sendSticker(current, item)
+              if (ok) noteToolSend(item.md5, item.name)
               return ok ? { ok: true, message: `发了「${item.name || item.md5.slice(0, 8)}」` } : { ok: false, message: '没发出去（表情被关着或者文件没了）' }
             } catch (error) {
               return { ok: false, message: `发失败：${error.message}` }
@@ -513,6 +575,10 @@ export default {
           required: ['name'],
           execute: async ({ name }) => {
             const ok = await hub.sendSticker(current, String(name || ''))
+            if (ok) {
+              const hit = match(String(name || ''))
+              noteToolSend(hit?.md5, hit?.name || name)
+            }
             return ok ? { ok: true, message: '发了' } : { ok: false, message: '表情库里没找到合适的' }
           },
         }),
@@ -578,9 +644,31 @@ export default {
     }
     absorbOldModule()
 
+    // ---------- 防重复发：工具发过的那张，回复里别再发 ----------
+    //
+    // 实测过的坏事：她一边调 meme_send 发了「蓝发女仆持刀」，一边在回复里写
+    // <sticker:气鼓鼓的>，对方收到两张图。挑图是对的，重复是错的。
+    // 用 reply/items 事件（她回复拆好之后、发出去之前）把重复的那条拿掉。
+    let lastToolSend = { chatId: '', at: 0, md5: '', name: '' }
+    const TOOL_SEND_WINDOW = 20_000
+
+    api.on('reply/items', (items, info = {}) => {
+      if (!lastToolSend.at || !Array.isArray(items) || !items.length) return undefined
+      if (String(info.chatId || '') !== lastToolSend.chatId) return undefined
+      if (Date.now() - lastToolSend.at > TOOL_SEND_WINDOW) return undefined
+
+      const kept = items.filter((it) => !it || it.kind !== 'sticker')
+      if (kept.length === items.length) return undefined
+
+      const sent = lastToolSend
+      lastToolSend = { chatId: '', at: 0, md5: '', name: '' } // 只用一次
+      log.info(`这一轮已经用工具发过「${sent.name || sent.md5.slice(0, 8)}」，去掉回复里重复的那张`)
+      return kept
+    })
+
     // ---------- 让她知道自己有这本账 ----------
 
-    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要挑图用 meme_find 先看，发图用 meme_send；回复里也可以直接写 <sticker:名字>。库里没有的就直说没有，不要编。')
+    api.rule(() => '你的表情包在一个统一库里，按角色/情绪/图上文字都能找。要发图就调一次 meme_send（它会直接把图发出去），调完不要在回复里再写 <sticker:…>，否则对方会收到两张；不调工具时才用 <sticker:名字>。库里没有的就直说没有，不要编。')
 
     api.command({
       name: '表情',
