@@ -687,6 +687,9 @@ window.__ModuleLoader__.load({
       }, [q, limit, todo, character, load, loadFacets, loadChars])
 
       useEffect(() => { load(q, limit, todo, character) }, [q, limit, todo, character, load])
+      // 角色表在挂载时就拉：详情里的角色下拉要用**全量**（含暂时 0 张的新角色），
+      // 只靠 facets 会漏掉「还没标过图」的角色。
+      useEffect(() => { if (!chars) loadChars() }, [chars, loadChars])
       useEffect(() => { loadFacets() }, [loadFacets])
 
       const pickTodo = (key) => { setTodo((cur) => (cur === key ? '' : key)); setCharacter(''); setLimit(60) }
@@ -791,7 +794,12 @@ window.__ModuleLoader__.load({
               // refreshToken 变了就连同 key 一起变，详情重新拉一次
               key: `${picked}:${refreshToken}`,
               md5: picked,
-              characters: (facets?.characters || []).map((c) => c.name),
+              // 候选 = 角色表全量 + 库里出现但表里没有的（后者理论不存在，兜底）
+              characters: (() => {
+                const fromTable = (chars?.items || []).map((c) => c.name)
+                const fromLib = (facets?.characters || []).map((c) => c.name)
+                return [...new Set([...fromTable, ...fromLib])]
+              })(),
               onSaved: () => { load(q, limit, todo, character); loadFacets() },
             })
             : h('div', { style: { fontSize: 12, opacity: 0.6, padding: '12px 0' } }, '点一张图看详情'),

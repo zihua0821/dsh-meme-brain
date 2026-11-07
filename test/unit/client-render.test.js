@@ -324,6 +324,13 @@ test('详情：能看到角色、外观、场景、指向、评分与被分析�
   assert.ok(textInput, '有图上文字输入框')
   assert.equal(textInput.props.value, '滚')
 
+  // 角色下拉要含**角色表全量**，包括还没标过图的新角色（以前只取库里用到的，新角色不出现）
+  const list = findAll(tree, (n) => n.props?.id === 'memebrain-chars')[0]
+  assert.ok(list, '有角色下拉')
+  const options = list.props.children.flat().map((o) => o.props.value)
+  assert.ok(options.includes('大肥鱼'), '库里用到的角色在')
+  assert.ok(options.includes('简笔小人'), '角色表里有但 0 张的也要在')
+
   // 场景：7 个可点的标签都在
   for (const s of ['吃饭', '工作', '游戏', '摸鱼', '睡觉', '社交', '日常']) {
     const btn = findAll(tree, (n) => n.props?.type === 'button' && textOf(n).join('') === s)[0]
