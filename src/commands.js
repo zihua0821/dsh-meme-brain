@@ -4,8 +4,8 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { openDb, findByPrefix } from './lib/db.js'
-import { INDEX_DB, ROOT, LIBRARY, ensureDirs } from './lib/store.js'
+import { openDb, findByPrefix, deleteItem, addEvent } from './lib/db.js'
+import { INDEX_DB, ROOT, LIBRARY, ensureDirs, moveToTrash } from './lib/store.js'
 import { doctor } from './lib/doctor.js'
 import { importDirectory, rebuild, repair, backfillMeta } from './lib/pipeline.js'
 import { formatList, formatDetail, formatDupes, formatTodo, formatSearch } from './lib/query.js'
@@ -29,6 +29,7 @@ const HELP = [
   '  /meme todo                        看待办（未分析 / 未命名 / 疑似重复）',
   '  /meme tag <md5前缀> [--name=] [--tags=] [--character=] [--unpin]',
   '        人工标注；填新角色会自动建进角色表；改角色会上锁',
+  '  /meme rm <md5前缀> [--yes]       删除（文件移到 trash/，不加 --yes 只预览）',
   '  /meme analyze [--limit=10] [--force] [--rename] [--md5=前缀] [--batch=4]',
   '        [--appearance=关键词] [--name=关键词] [--include-pinned]',
   '        --force 重跑已分析的图（不动名字）；--rename 才允许改写名字',
@@ -202,6 +203,28 @@ async function cmdRepair(flags) {
   } finally {
     db.close?.()
   }
+}
+
+/** 软删除：文件进 trash/，索引删掉。硬删不提供（数据要能找回） */
+function cmdRm(args, flags) {
+  const prefix = args[0]
+  if (!prefix) return '用法：/meme rm <md5前缀> [--yes]（文件会移到 trash/，索引删掉；不加 --yes 只预览）'
+  return withIndex((db) => {
+    const { row, ambiguous } = findByPrefix(db, prefix)
+    if (!row) return `没找到以 ${prefix} 开头的记录`
+    const label = `${row.name || '（未命名）'}（${row.md5.slice(0, 8)}）`
+
+    if (!flags.yes) {
+      return ambiguous
+        ? `前缀命中多条，按第一条预览（加 --yes 才真删）：\n  ${label}`
+        : `将要删除：${label}\n文件会移到 trash/，可以从那里恢复。确认请加 --yes`
+    }
+
+    const moved = moveToTrash(row.path)
+    deleteItem(db, row.md5)
+    addEvent(db, { md5: row.md5, action: 'retire', detail: JSON.stringify({ path: row.path, moved }) })
+    return `已删除：${label}${moved ? '\n文件已移到 trash/' : '\n（库文件本来就不在，只删了索引）'}`
+  })
 }
 
 async function cmdBackfill(raw, flags) {
@@ -383,6 +406,9 @@ export async function run(rawInput, ctx) {
       case 'tag':
       case 'annotate':
         return cmdTag(args, flags)
+      case 'rm':
+      case 'delete':
+        return ok(cmdRm(args, flags))
       case 'dupes':
         return ok(cmdDupes())
       case 'find':

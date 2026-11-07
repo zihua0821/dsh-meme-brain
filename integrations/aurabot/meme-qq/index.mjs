@@ -525,12 +525,17 @@ export default {
         log.debug('收表情下载失败：', error.message)
         return false
       }
-      // 只收「本来就是表情」的段：动图（多帧）或者 QQ 标成表情的（sub_type 1/7/11、md5 文件名）。
-      // 普通照片不收——那是另一个决定，不该藏在这里。
+      // 判定「这到底是不是表情」只用确凿证据，不猜文件名：
+      //   1. 字节是真动图（GIF 多帧 / 动 WebP / APNG）—— 内置从来收不到这类，正是我们要补的
+      //   2. QQ 自己把它标成表情段（sub_type = 1 收藏表情 / 7 大表情 / 11 动图表情）
+      // 之前还看「文件名像 <32位md5>.jpg 就当表情」，结果把 QQ 里所有图片都当表情收进来了
+      // （实收了两张游戏截图：921x713 / 878x620）。文件名不能作为证据。
       const animated = Boolean(animatedKind(buf))
-      const stickerish = subTypeOf(seg) === '1' || subTypeOf(seg) === '7' || subTypeOf(seg) === '11'
-        || /^[0-9a-f]{32}\./i.test(String(seg?.data?.file || ''))
-      if (!animated && !stickerish) return false
+      const marked = ['1', '7', '11'].includes(subTypeOf(seg))
+      if (!animated && !marked) {
+        log.debug('这张不像表情（既不是动图，也没被 QQ 标成表情段），跳过')
+        return false
+      }
       const r = await ingest(buf, 'qq')
       return Boolean(r && r.ok)
     }

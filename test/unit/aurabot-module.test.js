@@ -42,6 +42,15 @@ const ITEMS = [
 let fetched = []
 const realFetch = globalThis.fetch
 const FAKE_IMAGE = Buffer.from('GIF89a fake image bytes')
+// 真动图：GIF 头 + 两个图形控制扩展（animatedKind 就靠这个判多帧）
+const ANIMATED_IMAGE = Buffer.concat([
+  Buffer.from('GIF89a'),
+  Buffer.from([0x21, 0xf9, 0x04, 0x00, 0x00, 0x00, 0x00]),
+  Buffer.from('frame1'),
+  Buffer.from([0x21, 0xf9, 0x04, 0x00, 0x00, 0x00, 0x00]),
+  Buffer.from('frame2'),
+])
+let imageBytes = FAKE_IMAGE
 let addSeq = 0
 globalThis.fetch = async (url, init) => {
   const u = String(url)
@@ -63,8 +72,8 @@ globalThis.fetch = async (url, init) => {
   return {
     ok: true,
     status: 200,
-    headers: { get: () => String(FAKE_IMAGE.length) },
-    body: (async function* () { yield FAKE_IMAGE })(),
+    headers: { get: () => String(imageBytes.length) },
+    body: (async function* () { yield imageBytes })(),
   }
 }
 
@@ -313,6 +322,36 @@ test('主人发图被自动收集：同样不影响她怎么回', async () => {
 
   const out = handlers['reply/items']([{ kind: 'text', value: '这猫伸手够东西的样子 好像我够白饭' }], { chatId: 'private:1', userText: '存一下' })
   assert.equal(out, undefined, '自动收集也不该干扰她的回复')
+})
+
+test('收表情：普通静态图片不收（QQ 文件名是 md5 也不能当证据）', async () => {
+  const { handlers } = await load({}, { caption: false })
+  imageBytes = FAKE_IMAGE // 静态字节
+  fetched.length = 0
+  // sub_type=0 + 32 位 md5 文件名：曾经就是被这条判进来的（游戏截图）
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'a'.repeat(32) + '.png', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 120))
+  assert.ok(!fetched.some((f) => f.url.includes('op=add')), '普通图片不该进库')
+  imageBytes = FAKE_IMAGE
+})
+
+test('收表情：QQ 标成表情段（sub_type=1）的静态图照收', async () => {
+  const { handlers } = await load({}, { caption: false })
+  imageBytes = FAKE_IMAGE
+  fetched.length = 0
+  handlers.message({ kind: 'private', chatId: 'private:1', userId: '1', stickers: [{ type: 'image', data: { file: 'b'.repeat(32) + '.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 120))
+  assert.ok(fetched.some((f) => f.url.includes('op=add')), '标记为表情的应该收')
+})
+
+test('收表情：真动图即使 QQ 没标记也收（这正是内置漏掉的那类）', async () => {
+  const { handlers } = await load({}, { caption: false })
+  imageBytes = ANIMATED_IMAGE
+  fetched.length = 0
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '2', stickers: [], images: [{ type: 'image', data: { file: 'c'.repeat(32) + '.gif', sub_type: 0 } }] })
+  await new Promise((r) => setTimeout(r, 120))
+  assert.ok(fetched.some((f) => f.url.includes('op=add')), '多帧动图应该收')
+  imageBytes = FAKE_IMAGE
 })
 
 test('find 走 op=find，参数名和 Host 对得上', async () => {

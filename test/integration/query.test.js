@@ -2,7 +2,7 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -73,8 +73,7 @@ test('列表 / 单张 / 重复 / 待办', async () => {
   assert.match(query.formatTodo(index), /总数\s+2/)
 })
 
-test('回填：按 md5 从源 index.json 补名字与标签', async () => {
-  const source = join(tmpRoot, 'src')
+test('回填：按 md5 从源 index.json 补名字与标签', async () => {  const source = join(tmpRoot, 'src')
   const index = openIndex()
 
   const aBuf = readFileSync(join(fixtures, 'dup-a.jpg'))
@@ -101,4 +100,30 @@ test('回填：按 md5 从源 index.json 补名字与标签', async () => {
   // 再跑一次：不应重复更新
   const again = await pipeline.backfillMeta(index, source)
   assert.equal(again.updated, 0)
+})
+
+test('删除：不加 --yes 只预览，加了才进 trash 并删索引（软删除，可恢复）', async () => {
+  const index = openIndex()
+  const before = db.allItems(index)
+  assert.ok(before.length >= 1, '需要有数据')
+  const row = before[0]
+  const prefix = row.md5.slice(0, 8)
+  const { run } = await import('../../src/commands.js')
+
+  // 预览
+  const preview = await run(`rm ${prefix}`)
+  assert.equal(preview.kind, 'success')
+  assert.match(preview.text, /将要删除/)
+  assert.ok(db.getItem(index, row.md5), '预览不能真删')
+
+  // 确认
+  const done = await run(`rm ${prefix} --yes`)
+  assert.equal(done.kind, 'success')
+  assert.match(done.text, /已删除/)
+  assert.equal(db.getItem(index, row.md5), null, '索引里应该没了')
+
+  // 文件在 trash/ 里能找到（软删除）
+  const trashed = readdirSync(store.TRASH).filter((f) => f.includes(row.md5))
+  assert.equal(trashed.length, 1, '文件应该被移到 trash/ 而不是删掉')
+  assert.ok(!existsSync(store.absPath(row.path)), '库里的文件应该已经不在了')
 })
