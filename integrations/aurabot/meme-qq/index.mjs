@@ -286,8 +286,9 @@ export default {
     const TOOL_SEND_WINDOW = 20_000
 
     // 刚存过图 → 这一轮回复静默：去掉文字，只回一个表情（用户明确要求：存图不要任何回应）
+    // 两个来源都会置这个信号：① 工具存图（她或主人主动存）② 主人发的图被自动收集
     let saveSignal = { chatId: '', at: 0 }
-    const SAVE_SILENT_WINDOW = 20_000
+    const SAVE_SILENT_WINDOW = 15_000
 
     const textOf = (list) => list.filter((x) => x && x.kind === 'text').map((x) => String(x.value || '')).join(' ')
 
@@ -540,21 +541,22 @@ export default {
     }
 
     async function captureOne(seg) {
-      if (!underQuota()) return
+      if (!underQuota()) return false
       let buf
       try {
         buf = await fetchSegment(seg, maxBytes())
       } catch (error) {
         log.debug('收表情下载失败：', error.message)
-        return
+        return false
       }
       // 只收「本来就是表情」的段：动图（多帧）或者 QQ 标成表情的（sub_type 1/7/11、md5 文件名）。
       // 普通照片不收——那是另一个决定，不该藏在这里。
       const animated = Boolean(animatedKind(buf))
       const stickerish = subTypeOf(seg) === '1' || subTypeOf(seg) === '7' || subTypeOf(seg) === '11'
         || /^[0-9a-f]{32}\./i.test(String(seg?.data?.file || ''))
-      if (!animated && !stickerish) return
-      await ingest(buf, 'qq')
+      if (!animated && !stickerish) return false
+      const r = await ingest(buf, 'qq')
+      return Boolean(r && r.ok)
     }
 
     async function capture(msg) {
@@ -565,11 +567,12 @@ export default {
       if (msg.kind !== 'group' && s.fromPrivate === false) return
 
       const ownerQQ = String(api.config().ownerQQ || '')
+      const fromOwner = Boolean(ownerQQ) && String(msg.userId) === ownerQQ
       const mode = String(s.collectMode || 'auto')
       // 「她挑」：不自动收，先记着，她用 qq_collect_sticker 按编号收
       if (mode === 'ask') return
       // 「只听主人的」：只有主人发的时候才自动收
-      if (mode === 'owner' && !(ownerQQ && String(msg.userId) === ownerQQ)) return
+      if (mode === 'owner' && !fromOwner) return
 
       const segs = []
       const seen = new Set()
@@ -580,7 +583,19 @@ export default {
         seen.add(k)
         segs.push(seg)
       }
-      for (const seg of segs) await serialize(() => captureOne(seg))
+
+      let stored = 0
+      for (const seg of segs) {
+        const ok = await serialize(() => captureOne(seg))
+        if (ok) stored += 1
+      }
+
+      // 主人自己发的图被存了 → 这一轮当作「存图」，回复静默、只回一个表情。
+      // 别人发的表情不置信号（否则群友一发表情，她下一句正经回复也会被换成表情）。
+      if (stored && fromOwner) {
+        saveSignal = { chatId: msg.chatId, at: Date.now() }
+        log.debug(`主人发来 ${stored} 张已入库：这一轮只回表情`)
+      }
     }
 
     api.on('message', (msg) => {

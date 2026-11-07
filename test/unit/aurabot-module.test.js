@@ -325,6 +325,26 @@ test('存图之后这一轮静默：文字全去掉，只回一张表情', async
   assert.equal(sent.length, 0, '静默回复不该走工具发送路径')
 })
 
+test('主人发图被自动收集：这一轮同样静默（只回表情，不解释）', async () => {
+  const { handlers } = await load({}, { caption: false })
+  // 主人（ownerQQ='1'）发一张表情 → 自动收集成功
+  handlers.message({ kind: 'private', chatId: 'private:1', userId: '1', stickers: [{ type: 'image', data: { file: 'own.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 120))
+
+  const out = handlers['reply/items']([{ kind: 'text', value: '这猫伸手够东西的样子 好像我够白饭' }], { chatId: 'private:1', userText: '存一下' })
+  assert.ok(Array.isArray(out), '应该改写回复')
+  assert.deepEqual(out.map((i) => i.kind), ['image'], '文字去掉，只留一张表情')
+})
+
+test('群里别人发图：不置静默信号（她的正经回复照常发）', async () => {
+  const { handlers } = await load({}, { caption: false })
+  handlers.message({ kind: 'group', chatId: 'group:1', userId: '999', stickers: [{ type: 'image', data: { file: 'other.jpg', sub_type: 1 } }], images: [] })
+  await new Promise((r) => setTimeout(r, 120))
+
+  const out = handlers['reply/items']([{ kind: 'text', value: '在' }], { chatId: 'group:1' })
+  assert.equal(out, undefined, '别人发的表情不影响她的回复')
+})
+
 test('find 走 op=find，参数名和 Host 对得上', async () => {
   const { svc } = await load()
   fetched.length = 0
