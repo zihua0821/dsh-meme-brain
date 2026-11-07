@@ -149,7 +149,7 @@ POST /meme-brain/api?op=annotate  {md5,name?,tags?}
 5. 210 张仍是「未知角色」——角色表只有 6 条，且它们已经分析过，要 `--force` 重跑才会更新角色
 6. 没有 `pinned` 保护机制（人工确认的条目仍可能被将来 `--force` 改分数）
 7. 没有批量标注命令（`bulk`）
-8. 项目**尚未 git init**
+8. ~~项目尚未 git init~~ → **已初始化并提交**（`4072774`，54 个文件；`.gitignore` 排除 node_modules 与临时文件）
 
 ---
 
