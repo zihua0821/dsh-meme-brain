@@ -64,7 +64,7 @@ function fakeCtx(seen) {
           // 返回 4 帧都不够，按张数返回「帧: N」
           const count = seen.pending
           for (let i = 1; i <= count; i++) {
-            yield { type: 'text-delta', text: `帧: ${i}\n角色: 未知\n角色把握: 低\n文字: 无\n外观: 测试\n情绪: 0.1\n强度: 0.2\n攻击: 0\n亲密: 0\n抽象: 0.5\n指向: 无\n场景: 日常\n名字: 模型给的名字\n一句话: 测试\n` }
+            yield { type: 'text-delta', text: `帧: ${i}\n角色: 未知\n角色把握: 低\n文字: 无\n外观: 测试\n情绪: 0.1\n强度: 0.2\n攻击: 0\n亲密: 0\n抽象: 0.5\n指向: 无\n场景: 日常\n标签: 无语\n名字: 模型给的名字\n一句话: 测试\n` }
           }
           yield { type: 'finish', reason: { kind: 'stop' } }
         })()
@@ -119,6 +119,49 @@ test('--include-pinned 才连锁定的一起重跑', async () => {
 
   const locked = db.getItem(index, LOCKED)
   assert.notEqual(locked.character, '大肥鱼', '明确要求时才允许覆盖角色')
+})
+
+test('标签：原来没有才补，人工写过的不覆盖', async () => {
+  const MANUAL = 'c'.repeat(32)
+  const EMPTY = 'd'.repeat(32)
+  seed(MANUAL, { name: '有标签的', tags: '人工写的' })
+  seed(EMPTY, { name: '没标签的', tags: '' })
+
+  const seen = []
+  const ctx = instrument(fakeCtx(seen), seen)
+  await runAnalyze(ctx, index, { force: true, md5: MANUAL })
+  await runAnalyze(ctx, index, { force: true, md5: EMPTY })
+
+  assert.equal(db.getItem(index, MANUAL).tags, '人工写的', '人工标签不能被模型覆盖')
+  assert.equal(db.getItem(index, EMPTY).tags, '无语', '空的才由模型补上（只收词表里的词）')
+})
+
+test('tagsOnly：只补标签，锁定条目的角色/名字/分数都不动', async () => {
+  const LOCK = 'e'.repeat(32)
+  seed(LOCK, { name: '我标的', character: '大肥鱼', charConf: '人工', pinned: 1, tags: '' })
+  const before = db.getItem(index, LOCK)
+
+  const seen = []
+  const ctx = instrument(fakeCtx(seen), seen)
+  await runAnalyze(ctx, index, { force: true, md5: LOCK, tagsOnly: true })
+
+  const after = db.getItem(index, LOCK)
+  assert.equal(after.tags, '无语', '标签补上了（即使条目锁定）')
+  assert.equal(after.character, '大肥鱼', '人工标的角色不能被覆盖')
+  assert.equal(after.name, '我标的', '名字不能被覆盖')
+  assert.equal(after.char_conf, '人工', '把握度也不能动')
+  assert.equal(after.score, before.score, '分数不动')
+})
+
+test('tagsOnly：已有标签的不会被改', async () => {
+  const HAS = 'f'.repeat(32)
+  seed(HAS, { tags: '人工标签', pinned: 1, character: '龙图', charConf: '人工' })
+
+  const seen = []
+  const ctx = instrument(fakeCtx(seen), seen)
+  await runAnalyze(ctx, index, { force: true, md5: HAS, tagsOnly: true })
+
+  assert.equal(db.getItem(index, HAS).tags, '人工标签')
 })
 
 test('点名 --md5 也会尊重锁定，并说明原因（不静默跳过）', async () => {

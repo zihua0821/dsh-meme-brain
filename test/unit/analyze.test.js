@@ -111,6 +111,27 @@ test('外观为「无」时归一成空串', () => {
   assert.equal(parseAnalysis('帧: 1\n外观: 无')[0].appearance, '')
 })
 
+test('标签：只留闭集词表里的词，去重，最多 3 个', () => {
+  const r = parseAnalysis('帧: 1\n标签: 无语, 摸鱼, 自己编的词, 无语, 生气, 吃瓜')[0]
+  assert.equal(r.tags, '无语,摸鱼,生气', '去掉词表外的、去重、截到 3 个')
+})
+
+test('标签：模型写同义词不会被收进来（防止检索被拆散）', () => {
+  const r = parseAnalysis('帧: 1\n标签: 无奈子, emo, 无语子')[0]
+  assert.equal(r.tags, '', '词表外的同义词一律不收')
+})
+
+test('标签：逗号、顿号、斜杠、空格都能当分隔符', () => {
+  assert.equal(parseAnalysis('帧: 1\n标签: 卖萌、委屈/开心 震惊')[0].tags, '卖萌,委屈,开心')
+})
+
+test('提示词把标签词表写死了（闭集，不让模型自由发挥）', () => {
+  const sys = buildSystemPrompt([])
+  assert.match(sys, /标签tags/)
+  for (const w of ['卖萌', '无语', '嘲讽']) assert.ok(sys.includes(w), `词表里应有 ${w}`)
+  assert.match(buildUserText(1), /标签: 无语,摸鱼/, '示例里也给了标签')
+})
+
 test('提示词包含锚点与场景清单', () => {
   const sys = buildSystemPrompt([])
   assert.match(sys, /情绪valence/)

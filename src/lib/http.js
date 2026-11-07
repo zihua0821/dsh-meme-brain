@@ -295,7 +295,7 @@ async function handlePost(url, req, res, ctx) {
     }
 
     if (op === 'analyze') {
-      return await analyzeOne(ctx, db, res, String(body.md5 || ''))
+      return await analyzeOne(ctx, db, res, String(body.md5 || ''), { tagsOnly: body.tagsOnly === true })
     }
 
     return sendJson(res, 400, { ok: false, error: { code: 'E_BAD_OP', message: `未知 op：${op}` } })
@@ -382,7 +382,7 @@ async function addOne(url, req, res) {
  * 分析单张。业务全部在 lib/analyze.js，这里只负责：
  * 校验、串行化、把结果翻译成界面能读的形状。
  */
-async function analyzeOne(ctx, db, res, prefix) {
+async function analyzeOne(ctx, db, res, prefix, opts = {}) {
   const { row } = findByPrefix(db, prefix)
   if (!row) return sendJson(res, 404, { ok: false, error: { code: 'E_NOT_FOUND' } })
 
@@ -400,7 +400,14 @@ async function analyzeOne(ctx, db, res, prefix) {
   inFlight.add(row.md5)
   try {
     // force：按钮的语义就是「现在就（重新）分析这一张」
-    const result = await runAnalyze(ctx, db, { md5: row.md5, force: true, rename: false, includePinned: false })
+    const result = await runAnalyze(ctx, db, {
+      md5: row.md5,
+      force: true,
+      rename: false,
+      includePinned: false,
+      // 只补标签：不动角色/名字/分数，锁定条目也允许补
+      tagsOnly: opts.tagsOnly === true,
+    })
     const after = findByPrefix(db, row.md5).row
     return sendJson(res, 200, {
       ok: true,

@@ -14,6 +14,16 @@ export const SCORE_KEYS = ['valence', 'arousal', 'aggression', 'intimacy', 'absu
 export const TARGETS = ['自己', '对方', '第三方', '无']
 export const SCENES = ['吃饭', '工作', '游戏', '摸鱼', '睡觉', '社交', '日常']
 
+/**
+ * 标签的**闭集词表**：只允许这些词，按库里既有的高频词排的。
+ * 为什么要闭集：标签是检索用的意图层，同义词一多（「无语/无奈/无语子」）搜索就散。
+ * 加词就改这里，别让模型自由发挥。
+ */
+export const TAG_WORDS = [
+  '卖萌', '无语', '委屈', '疑惑', '开心', '嘲讽', '震惊', '生气', '得意',
+  '攻击', '摸鱼', '吃瓜', '困', '干饭', '无奈', '害怕', '装傻', '嫌弃',
+]
+
 const FIELD_ALIASES = {
   角色: 'character',
   角色把握: 'charConf',
@@ -27,6 +37,7 @@ const FIELD_ALIASES = {
   场景: 'scene',
   名字: 'name',
   一句话: 'summary',
+  标签: 'tags',
   外观: 'appearance',
 }
 
@@ -55,6 +66,7 @@ export function buildSystemPrompt(characters = []) {
     '文字text：图上真实出现的文字；没有就写「无」，不要猜。',
     '外观appearance：只写看得见的特征——发色发型、服装、配饰、物种/动物特征、图形元素，不超过 30 字；不要写情绪、不要猜身份。',
     '名字name：不超过 12 个字的短名，要能让人一眼想起这张图。',
+    `标签tags：从 【${TAG_WORDS.join(' / ')}】 里选 1~3 个，逗号分隔；这是检索用的意图词，不要写外观描述`,
     '一句话summary：不超过 20 字，描述画面在表达什么。',
   ].join('\n')
 }
@@ -63,7 +75,7 @@ export function buildSystemPrompt(characters = []) {
 export function buildUserText(count) {
   return [
     `请对下面 ${count} 张图**逐张**输出。每张以一行「帧: N」开头（N 从 1 开始），紧接着这些行：`,
-    '角色 / 角色把握 / 文字 / 外观 / 情绪 / 强度 / 攻击 / 亲密 / 抽象 / 指向 / 场景 / 名字 / 一句话',
+    '角色 / 角色把握 / 文字 / 外观 / 情绪 / 强度 / 攻击 / 亲密 / 抽象 / 指向 / 场景 / 标签 / 名字 / 一句话',
     '',
     '示例：',
     '帧: 1',
@@ -78,6 +90,7 @@ export function buildUserText(count) {
     '抽象: 0.7',
     '指向: 自己',
     '场景: 摸鱼,日常',
+    '标签: 无语,摸鱼',
     '名字: 摆烂摊手',
     '一句话: 瘫在沙发上表示无所谓',
   ].join('\n')
@@ -153,6 +166,13 @@ export function parseAnalysis(raw) {
       appearance: String(f.appearance || '').replace(/^无$/, '').slice(0, 60),
       character,
       charConf,
+      tags: String(f.tags || '')
+        .split(/[,，、/\s]+/)
+        .map((s) => s.trim())
+        .filter((s) => TAG_WORDS.includes(s))
+        .filter((s, i, arr) => arr.indexOf(s) === i)
+        .slice(0, 3)
+        .join(','),
       name,
       summary: String(f.summary || '').slice(0, 40),
     })
@@ -209,6 +229,8 @@ export async function runAnalyze(ctx, index, opts = {}) {
   const batchSize = Math.max(1, Math.min(6, Number(opts.batchSize) || 4))
   const force = Boolean(opts.force)
   const includePinned = Boolean(opts.includePinned)
+  // 只补标签：不动角色/名字/分数，也不受「人工锁定」阻挡（补标签不是改判断）
+  const tagsOnly = Boolean(opts.tagsOnly)
 
   const skipped = []
   let rows
@@ -216,7 +238,7 @@ export async function runAnalyze(ctx, index, opts = {}) {
     rows = [db.findByPrefix(index, opts.md5).row].filter(Boolean)
     // 指定单张时也要尊重人工锁定，但要说清楚为什么没跑（不能静默跳过）
     rows = rows.filter((row) => {
-      if (!row.pinned || includePinned) return true
+      if (!row.pinned || includePinned || tagsOnly) return true
       skipped.push({ md5: row.md5, message: '已人工锁定，跳过（确实要重跑加 --include-pinned）' })
       return false
     })
@@ -224,7 +246,7 @@ export async function runAnalyze(ctx, index, opts = {}) {
     const conds = []
     const params = []
     if (!force) conds.push('analyzed_at IS NULL')
-    if (!includePinned) conds.push('pinned = 0')
+    if (!includePinned && !tagsOnly) conds.push('pinned = 0')
     if (opts.appearance) {
       conds.push('appearance LIKE ?')
       params.push(`%${opts.appearance}%`)
@@ -276,6 +298,18 @@ export async function runAnalyze(ctx, index, opts = {}) {
       }
       // 角色名先规范化：剥掉「（梗模板）」这类后缀、对齐别名；对不上就记未知
       const charName = characterTable.normalizeName(a.character)
+
+      // tagsOnly：只补标签。人工标过的角色/名字/分数一律不动，也不更新 analyzed_at
+      if (tagsOnly) {
+        if (!String(row.tags || '').trim() && a.tags) {
+          db.updateItem(index, row.md5, { tags: a.tags })
+          result.ok++
+        } else {
+          result.failed.push({ md5: row.md5, message: '模型没给出词表内的标签' })
+        }
+        return
+      }
+
       const patch = {
         score: JSON.stringify(a.score),
         scene: a.scene || null,
@@ -288,6 +322,8 @@ export async function runAnalyze(ctx, index, opts = {}) {
         model,
       }
       if ((isPlaceholderName(row.name) || opts.rename) && a.name) patch.name = a.name
+      // 标签只在原来为空时补：人工写过的标签是判断，不该被模型覆盖
+      if (!String(row.tags || '').trim() && a.tags) patch.tags = a.tags
       db.updateItem(index, row.md5, patch)
       if (patch.name) result.named++
       result.ok++
