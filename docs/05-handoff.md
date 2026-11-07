@@ -147,6 +147,7 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 | **Aurabot 模块** | `%USERPROFILE%\.dsh\plugins-data\aurabot\modules\meme-qq\index.mjs`（名字「表情脑」）。仓库源码在 `integrations/aurabot/meme-qq/`，改完跑 `node scripts/deploy-aurabot.mjs`（Aurabot 3 秒热加载） |
 | GUI 端口 | 每次重启会变（当前见运行时 context / `ctx.webServer.getOrigin()`） |
 | dsh CLI | `F:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
+| **PowerShell** | 工具默认的 `pwsh` 其实是 **Windows PowerShell 5.1**（`powershell.exe`）。本机另装了 **PowerShell 7.6.9**，是 Store 的应用执行别名：`& "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"`（`where pwsh` 看不见它，必须用全路径）。**要读写中文文件、发中文 JSON，用 PS7 或 node** |
 | 依赖 | 只有 `sharp`（原生，libvips 8.18.7） |
 
 ### 改完代码怎么生效
@@ -219,7 +220,7 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 | 坑 | 事实 |
 |---|---|
 | **BOM 吃数据** | `Set-Content -Encoding utf8` 写 BOM，`JSON.parse` 抛错被静默吞掉 → 角色表被清空过一次。已修：剥 BOM + `lastLoadError` |
-| **别用 PowerShell 改中文文件** | 这台机器上 `pwsh` 实际是 PowerShell 5.1：`Get-Content -Raw` 按 GBK 读 UTF-8 文件 → `Set-Content` 写回后整篇中文变乱码（`docs/04-acceptance.md` 中过一次，靠 `git checkout --` 救回）。**改文档/代码一律用编辑工具，不用 shell 重写文件** |
+| **别用 5.1 的 PowerShell 改中文文件** | 工具里的 `pwsh` 是 **PowerShell 5.1**：`Get-Content -Raw` 按 GBK 读 UTF-8 文件 → `Set-Content` 写回后整篇中文变乱码（`docs/04-acceptance.md` 中过一次，靠 `git checkout --` 救回）。**三条安全路径**：① 用编辑工具（read/write/edit）；② 用 node 读写；③ 用 **PS7** `& "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe" -File 脚本.ps1`（实测 7.6.9，读 UTF-8 正常） |
 | `maxTokens: 2000` 太小 | 4 张图 × 13 字段会被截断（8 次失败）。已改 4000 |
 | 角色名带标注 | 提示词里写「龙图（梗模板）」，模型原样抄回 → 存成 `龙图（梗模板）`。已修：`normalizeName()` 剥括号、认别名、查表 |
 | `--force` 会覆盖名字 | 已拆开：`--force` 只重跑分数，`--rename` 才改名 |
@@ -232,7 +233,7 @@ POST /meme-brain/api?op=add&source=qq  body=图片原始字节  → 判重入库
 | WebP | sharp 支持，旧方案（gifuct/pngjs）不支持 |
 | **`api.setConfig` 是深合并** | Aurabot 模块里要**删键**必须传函数形式 `api.setConfig(cfg => 新cfg)`（整份替换）；传对象删不掉，`forkedFrom` 因此残留过一次 |
 | **别拿文件名当证据** | QQ 给所有图片都起 `<32位md5>.jpg` 这种名字。按文件名判「是不是表情」→ 收进了两张游戏截图。判定要基于字节（是不是动图）或 QQ 的 `sub_type` |
-| **PowerShell 发中文会变问号** | `Invoke-WebRequest -Body $中文`（PS 5.1）按 Latin-1 编码，服务端收到一串 `?`，写进库就是坏数据。测接口发中文**用 node 的 fetch**，或者 `/meme tag` 命令（进程内，UTF-8 安全） |
+| **5.1 发中文会变问号** | `Invoke-WebRequest -Body $中文`（PS 5.1）按 Latin-1 编码，服务端收到一串 `?`，写进库就是坏数据（实测把一条的外观写成了问号）。**PS7 已实测正常**（`-ContentType 'application/json; charset=utf-8'`，中文往返无碍）；不想切 PS7 就用 node 的 `fetch` 或 `/meme tag` 命令 |
 | **面板页签是写死的** | `TAB_MODS = { stickers: ['stickers'] }`：只有内置 stickers 模块在跑，「表达 → 表情包」页才存在；自定义模块页只能落「平台/系统」两组 |
 | **存图和回复要分开** | 早期版本让「存图」触发 `saveSignal`，删掉她这轮文字强塞表情。用户指出这是错的：存表情和回应是**两条并行互不干扰的路**，硬设「回」或「不回」都不对 |
 

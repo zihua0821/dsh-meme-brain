@@ -584,6 +584,9 @@ git revert --no-edit <本次提交>
 /meme show 4f6998d4      → 场景/评分变了，状态带「人工锁定」
 ```
 
+> 用 HTTP 接口测中文时注意：DSH 工具里的 `pwsh` 是 **PowerShell 5.1**，`Invoke-WebRequest -Body $中文` 会按 Latin-1 编码，服务端收到一串 `?`。
+> 用本机的 **PowerShell 7**（`& "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"`）或 node 的 `fetch` 都正常。
+
 验证「锁定挡得住重跑」：
 
 ```
