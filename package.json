@@ -54,11 +54,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR-GITHUB-USER/dsh-meme-brain.git"
+    "url": "git+https://github.com/zihua0821/dsh-meme-brain.git"
   },
-  "homepage": "https://github.com/YOUR-GITHUB-USER/dsh-meme-brain#readme",
+  "homepage": "https://github.com/zihua0821/dsh-meme-brain#readme",
   "bugs": {
-    "url": "https://github.com/YOUR-GITHUB-USER/dsh-meme-brain/issues"
+    "url": "https://github.com/zihua0821/dsh-meme-brain/issues"
   },
   "dependencies": {
     "sharp": "^0.35.5"

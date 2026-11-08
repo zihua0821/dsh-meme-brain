@@ -5,7 +5,7 @@
 
 > 一句话：**人能用、AI 能用、QQ 里也能用**；库只有一份，全部在本机。
 
-[![CI](https://github.com/YOUR-GITHUB-USER/dsh-meme-brain/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-GITHUB-USER/dsh-meme-brain/actions/workflows/ci.yml)
+[![CI](https://github.com/zihua0821/dsh-meme-brain/actions/workflows/ci.yml/badge.svg)](https://github.com/zihua0821/dsh-meme-brain/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.13-339933)](package.json)
 
@@ -71,7 +71,7 @@
 **1. 装插件**
 
 ```powershell
-git clone https://github.com/YOUR-GITHUB-USER/dsh-meme-brain.git
+git clone https://github.com/zihua0821/dsh-meme-brain.git
 cd dsh-meme-brain
 npm ci
 
