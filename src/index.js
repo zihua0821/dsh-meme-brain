@@ -6,6 +6,7 @@
 //   - 任何子命令都要能在没有 Web 界面的情况下完成。
 
 import { run } from './commands.js'
+import { seedIfMissing } from './lib/characters.js'
 import { registerApi } from './lib/http.js'
 import { registerTools } from './lib/tools.js'
 
@@ -14,6 +15,16 @@ export const inject = ['commands', 'webServer', 'llm', 'attachments', 'agentDefa
 
 export function apply(ctx) {
   const log = ctx.logger?.('meme-brain') ?? console
+
+  // 首次启动：把随包带的角色表种子写进数据目录（已有就不动，坏的也不动）。
+  // 没有这一步，新装的人拿到的是空表，模型会把所有表情都标成「未知」。
+  try {
+    const seeded = seedIfMissing()
+    if (seeded.seeded) log.info?.(`角色表已初始化：${seeded.count} 条（来自 characters.seed.json）`)
+    else if (seeded.error) log.warn?.('角色表种子没写入：', seeded.error)
+  } catch (error) {
+    log.warn?.('角色表种子失败（不影响其它功能）：', error.message)
+  }
 
   const dispose = ctx.commands.register({
     name: 'meme',

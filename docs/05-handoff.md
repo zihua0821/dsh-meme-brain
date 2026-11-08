@@ -2,13 +2,17 @@
 
 > 用途：上下文压缩/换会话后，读这一份就能继续干。
 > 权威顺序：`docs/` 里的设计文档 > 本文 > 代码注释。
+>
+> **这是一份开发过程记录，不是使用手册**：里面的路径、端口、张数都是当时本机的快照。
+> 想把它用起来看 [`README.md`](../README.md)；想知道每个里程碑验收了什么看
+> [`04-acceptance.md`](04-acceptance.md)。保留这份是因为「为什么这么写」比「怎么写」更容易丢。
 
 ---
 
 ## 0. 复核快照（每次新会话先看这节）
 
 ```
-node --test "test/**/*.test.js"      → 205 pass / 0 fail
+node --test "test/**/*.test.js"      → 212 pass / 0 fail
 node scripts/verify.mjs              → 文件数 = 记录数 / 孤儿 0 / 缺文件 0 / 重复对 0
 GET :<port>/meme-brain/api?op=facets → 角色分布 + 各待办计数（数字每天都在长，别背数字）
 GET :<port>/meme-brain/api?op=chars  → 角色表全量（当前 38 条）
@@ -44,7 +48,7 @@ git status                           → 两个仓库都 clean
    锁定的条目用 `tagsOnly` 模式补（不动角色/名字/分数）。
 7. **角色表 6 → 38**：新增吉伊卡哇三人组（吉伊/小八/乌萨奇，互相写排除条件）、柯基、奶龙、
    汤姆猫、老鼠、鼠鼠，以及兜底类别「默认的动物」「呆猫」。多轮收紧 `look` 去掉了「磁吸」误判。
-8. **峰谷节奏拆成独立仓库** `F:\dsh-peak-rhythm`（含法定节假日、和 dsh-meter 对表），
+8. **峰谷节奏拆成独立仓库** `peak-rhythm`（含法定节假日、和 dsh-meter 对表），
    本仓库只留 ADR-0021 一条记录。
 9. **文档收尾**：README 重写、新增 CHANGELOG、02/04/05 同步到当前状态。
 
@@ -205,7 +209,7 @@ POST /meme-brain/api?op=char-rm   {name,force?}   → 有图在用时 409 E_IN_U
 聊天频率策略（DeepSeek 峰谷：高峰少说、空闲活跃，含中国法定节假日）**建了独立仓库**：
 
 ```
-F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
+peak-rhythm   （独立仓库）Aurabot 模块，id = peak-rhythm
   index.mjs               模块本体（group/decide 门控）
   calendar.mjs            法定节假日表（2025/2026，国办通知口径）
   scripts/deploy.mjs      部署到 Aurabot modules 目录
@@ -226,13 +230,13 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 
 | 项 | 值 |
 |---|---|
-| 项目目录 | `F:\dsh-meme-brain`（当前工作目录） |
-| 插件安装方式 | profile 里是 **link**：`dsh-meme-brain → F:\dsh-meme-brain` |
+| 项目目录 | 本仓库（当前工作目录） |
+| 插件安装方式 | profile 里是 **link**：`dsh-meme-brain → <克隆目录>\dsh-meme-brain` |
 | profile | `%USERPROFILE%\.dsh\profiles\desktop` |
 | 数据目录 | `%USERPROFILE%\.dsh\meme-brain\`（library/ + index.db + characters.json + judge-cache.json + exports/ + backups/ + trash/） |
 | **Aurabot 模块** | `%USERPROFILE%\.dsh\plugins-data\aurabot\modules\meme-qq\index.mjs`（名字「表情脑」）。仓库源码在 `integrations/aurabot/meme-qq/`，改完跑 `node scripts/deploy-aurabot.mjs`（Aurabot 3 秒热加载） |
 | GUI 端口 | 每次重启会变（2026-11-08 是 4795）。用运行时 context 或 `ctx.webServer.getOrigin()`，别写死 |
-| dsh CLI | `F:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
+| dsh CLI | `<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd` |
 | **PowerShell** | **工具里的 `pwsh` 已是 PowerShell 7.6.9**（由 profile 补丁把 `pwsh-sandbox.pwshPath` 指到 `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`）。改之前默认是 5.1，读/写中文都会坏。**别再按 5.1 的行为写脚本**：`Get-Content`/`Set-Content` 默认 UTF-8，`Invoke-WebRequest` 发中文正常 |
 | 依赖 | 只有 `sharp`（原生，libvips 8.18.7） |
 
@@ -255,7 +259,7 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 - id: pwsh-sandbox
   name: "@deepseek-ai/dsh-pwsh-sandbox"
   config:
-    pwshPath: C:\Users\zihua\AppData\Local\Microsoft\WindowsApps\pwsh.exe
+    pwshPath: C:\Users\<用户名>\AppData\Local\Microsoft\WindowsApps\pwsh.exe
 ```
 
 - **为什么**：默认是 Windows PowerShell 5.1，读 UTF-8 中文会乱码、发中文 JSON 会变 `?`
@@ -317,7 +321,7 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 `scripts/{deploy-aurabot,import-characters,bulk-analyze,reanalyze,verify,scan-library,cluster-appearance}.mjs`、
 `test/{unit,integration,regression}`。
 
-**另一个仓库**：`F:\dsh-peak-rhythm`（峰谷节奏，Aurabot 模块，含节假日表和对 `dsh-meter` 的对表测试）。
+**另一个仓库**：`peak-rhythm`（峰谷节奏，Aurabot 模块，含节假日表和对 `dsh-meter` 的对表测试）。
 
 ---
 
@@ -374,12 +378,12 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 
 ---
 
-## 10. 工作方式约定（用户明确要求）
+## 10. 工作方式约定（维护者的要求）
 
 1. **每个里程碑按四段交付**：做什么 / 怎么验 / 你世界里的变化 / 怎么退；验收必须是用户能自己敲的命令 + 具体预期输出
 2. **先讨论后开工**：架构、定位、取舍类问题先出方案再动手
 3. **改代码后自查**：`node --test "test/**/*.test.js"` 全绿 + `node --check` + 需要时跑 `scripts/verify.mjs`
-4. 用户是 UE 开发者，不读前端/JS 代码——**结论要能用命令复现，不能只说"测试通过"**
+4. 维护者不读前端/JS 代码——**结论要能用命令复现，不能只说"测试通过"**
 5. **数据改动要说明后果**：删/改/迁移前讲清影响面和怎么退
 6. **不要为填满而硬套**：模型认不出就写「未知」，比认错强
 
@@ -387,9 +391,9 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 
 ## 11. 新会话怎么开始
 
-1. `cd F:\dsh-meme-brain`
+1. `cd <克隆目录>\dsh-meme-brain`
 2. 读本文（尤其 §0 快照和 §0.5「上次做了什么」），要细节再翻 `docs/04-acceptance.md`
 3. 跑 `/meme doctor` + `node --test "test/**/*.test.js"` 确认没坏
 4. 看 §9 挑一件做，或按用户当次要求来
 5. 动 QQ 模块：改 `integrations/aurabot/meme-qq/` 后跑 `node scripts/deploy-aurabot.mjs`；
-   峰谷模块在 `F:\dsh-peak-rhythm`，改完跑它自己的 `node scripts/deploy.mjs`
+   峰谷模块在 `peak-rhythm` 仓库，改完跑它自己的 `node scripts/deploy.mjs`

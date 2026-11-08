@@ -113,7 +113,7 @@ export default {
     const log = api.log
     const hub = api.core.hub
     /**
-     * 参数唯一来源：本模块的设置（面板「扩展」→ 表情包（新库））。
+     * 参数唯一来源：本模块的设置（面板「系统」→ 表情脑）。
      * 内置那套 config.stickers 不再作为来源——它只被镜像成「旧库路径全关」，
      * 免得 hub 那边的内置逻辑（发表情、自动配、提示收图）插一脚。
      */
@@ -961,7 +961,8 @@ export default {
 
     /**
      * 内置 stickers 模块留在插件里不动，只是配置里停用；旧补录模块的逻辑已经并进来，也停用。
-     * 想退回内置：面板「扩展」页把 stickers 打开，或把 config.json 的 modules.stickers.enabled 改回 true。
+     * 想退回内置：在面板的模块页把 stickers 打开（或把 config.json 的 modules.stickers.enabled
+     * 改回 true），同时把本模块关掉。
      */
     function retireOldModules() {
       try {

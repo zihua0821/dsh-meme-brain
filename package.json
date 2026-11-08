@@ -1,7 +1,6 @@
 {
   "name": "dsh-meme-brain",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "表情包管理系统：解析、去重、入库、七维评分、检索与管理",
   "icon": "icon.svg",
@@ -22,20 +21,45 @@
   },
   "files": [
     "src/",
+    "scripts/",
     "client.js",
     "cordis.patch.yml",
     "icon.svg",
+    "characters.seed.json",
     "locale/*.json",
-    "README.md"
+    "integrations/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
+    "verify": "node scripts/verify.mjs",
     "scan": "node scripts/scan-library.mjs"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "sticker",
+    "meme",
+    "表情包",
+    "sqlite",
+    "sharp",
+    "aurabot",
+    "qqbot"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR-GITHUB-USER/dsh-meme-brain.git"
+  },
+  "homepage": "https://github.com/YOUR-GITHUB-USER/dsh-meme-brain#readme",
+  "bugs": {
+    "url": "https://github.com/YOUR-GITHUB-USER/dsh-meme-brain/issues"
+  },
   "dependencies": {
     "sharp": "^0.35.5"
   }

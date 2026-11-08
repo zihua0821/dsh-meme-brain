@@ -60,7 +60,7 @@
 **预期输出**（当前应该正好长这样）：
 
 ```
-库根目录     C:\Users\zihua\.dsh\meme-brain（尚未创建）
+库根目录     %USERPROFILE%\.dsh\meme-brain（尚未创建）
 library       0 个文件，0B
               ⚠ 库目录不存在，首次入库时会自动创建
 index.db      不存在（首次入库时创建）
@@ -92,7 +92,7 @@ characters    不存在（人工标注数据，建议纳入备份）
 打开 PowerShell，依次执行：
 
 ```powershell
-cd F:\dsh-meme-brain
+cd dsh-meme-brain
 npm test
 ```
 
@@ -136,7 +136,7 @@ node scripts\scan-library.mjs "$env:USERPROFILE\.dsh\plugins-data\aurabot\sticke
 
 ---
 
-## M2 · 有了库和索引 ⏳
+## M2 · 有了库和索引 ✅
 
 **① 做什么**
 建立一个真正的表情库：把图片收进 `~/.dsh/meme-brain/library/`，并用一张索引表记住每张图的指纹、尺寸、状态。重复的图**在入库前**就会被拦下。
@@ -167,7 +167,7 @@ node scripts\scan-library.mjs "$env:USERPROFILE\.dsh\plugins-data\aurabot\sticke
 然后跑 `/meme repair`，预期恢复为 0。
 
 **③ 你世界里的变化**
-- 出现目录 `C:\Users\zihua\.dsh\meme-brain\`，里面有 `library/` 和 `index.db`；
+- 出现目录 `%USERPROFILE%\.dsh\meme-brain\`，里面有 `library/` 和 `index.db`；
 - 磁盘会多占一份图片（原库不动）。
 
 **④ 怎么退**
@@ -175,7 +175,7 @@ node scripts\scan-library.mjs "$env:USERPROFILE\.dsh\plugins-data\aurabot\sticke
 
 ---
 
-## M3 · 管理命令集 ✅ 代码完成（待验收）
+## M3 · 管理命令集 ✅
 
 **① 做什么**
 不用界面就能管库：列出、看单张、看重复、看待办，以及把源库里原有的名字和标签回填进来。
@@ -214,7 +214,7 @@ node scripts\scan-library.mjs "$env:USERPROFILE\.dsh\plugins-data\aurabot\sticke
 
 ---
 
-## M4 · 最简界面 ✅ 代码完成（待验收）
+## M4 · 最简界面 ✅
 
 **① 做什么**
 在 DSH 侧栏加一个"表情包"入口：网格看图、点开看详情、直接改名字和标签。页面不含任何业务逻辑，全部数据来自 `/meme-brain/api`。
@@ -244,7 +244,7 @@ node scripts\scan-library.mjs "$env:USERPROFILE\.dsh\plugins-data\aurabot\sticke
 
 ---
 
-## M5 · 七维分析 ✅ 代码完成（待验收）
+## M5 · 七维分析 ✅
 
 **① 做什么**
 让模型看每一张表情，给出：名字、角色、图上文字、六维分（情绪/强度/攻击/亲密/抽象/指向）、场景。
@@ -424,7 +424,7 @@ node --test "test/**/*.test.js"
 **④ 怎么退**
 
 ```
-cd F:\dsh-meme-brain
+cd dsh-meme-brain
 git revert --no-edit <本次提交>
 # 然后插件管理器关/开一次 + 页面 Ctrl+R
 ```
@@ -536,7 +536,7 @@ node --test "test/**/*.test.js"
 **④ 怎么退**
 
 ```
-cd F:\dsh-meme-brain
+cd dsh-meme-brain
 git revert --no-edit <本次提交>
 # 插件管理器关/开一次 + 页面 Ctrl+R
 ```
@@ -916,7 +916,7 @@ node --test "test/**/*.test.js"
 **④ 怎么退**
 
 ```
-cd F:\dsh-meme-brain
+cd dsh-meme-brain
 git revert --no-edit <本次提交>
 # 插件管理器关/开一次 + Ctrl+R
 ```
@@ -1002,7 +1002,7 @@ node --test "test/**/*.test.js"
 **④ 怎么退**
 
 ```
-cd F:\dsh-meme-brain
+cd dsh-meme-brain
 git revert --no-edit <本次提交>
 # 插件管理器关/开一次 include:meme-brain（工具会自动撤掉）
 ```

@@ -4,6 +4,23 @@
 
 ---
 
+## 0.1.0 · 2026-11-08 · 首次公开发布
+
+仓库第一次以开源形式发布。**功能没变**，变的是「别人能不能装上、能不能看懂、能不能信」：
+
+- **许可证**：新增 `LICENSE`（MIT）；`test/fixtures/` 里的图片是表情包样本，单独注明不在许可范围内。
+- **能装上**：提交 `package-lock.json`（`npm ci` 可复现）；`files` 补齐角色表种子和 `integrations/`；
+  补 `repository` / `homepage` / `bugs` / `keywords`。
+- **开箱可用**：`characters.json` 改名 `characters.seed.json`，**首次启动自动种入 38 条角色表**
+  （已有就不动，坏掉的也不覆盖）。没有这一步，新装的人拿到空表，模型会把所有图都标成「未知」。
+- **Aurabot 模块成为一等公民**：新增 `integrations/aurabot/README.md`
+  （安装 / 14 项参数 / 8 个工具 / 权限 / 怎么退回内置）。
+- **CI**：新增 `.github/workflows/ci.yml`，ubuntu + windows × Node 22/24 跑 `npm ci && npm test`。
+- **去个人信息**：文档里的本机绝对路径改成 `%USERPROFILE%` / `<克隆目录>`。
+- **文档**：新增 `CONTRIBUTING.md`；README 重写成开源门面；验收手册里的过期状态标记修正。
+
+---
+
 ## M9 · 界面与备份（完成）
 
 - **M9-a 详情页**：网格点开看全部分析结果（角色/外观/场景/指向/图上文字/五维评分/文件与来源）。
@@ -65,5 +82,5 @@
 
 ## 相关但不在本仓库
 
-- **峰谷节奏**（按 DeepSeek 峰谷调聊天频率）：独立仓库 `F:\dsh-peak-rhythm`。
+- **峰谷节奏**（按 DeepSeek 峰谷调聊天频率）：独立仓库 `peak-rhythm`。
   决策记录见 `docs/00-decisions.md` 的 ADR-0021。

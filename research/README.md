@@ -6,6 +6,10 @@
 2. 它们可以直接改写成 M1 的单元测试（判定阈值、透明处理、多帧比较）；
 3. 将来评审"算法要不要改"时，重跑一遍就能对比。
 
+> **注意**：脚本里的默认路径指向立项时那台机器上的 Aurabot 旧库
+> （`plugins-data/aurabot/stickers/`）。那份库已经不在本项目里了，换台机器跑要改脚本顶部的常量。
+> 这些结论写在 `docs/02-architecture.md` 的附录和 ADR 里，脚本只是证据来源。
+
 ## 准备
 
 ```powershell
@@ -14,7 +18,7 @@ npm install jpeg-js pngjs gifuct-js
 ```
 
 脚本默认读取：
-- Aurabot 库：`%USERPROFILE%\.dsh\plugins-data\aurabot\stickers\`
+- Aurabot 旧库：`%USERPROFILE%\.dsh\plugins-data\aurabot\stickers\`
 - dsh-meme 包：`%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-meme\memes\dafeiyu-001\memes\`
 
 换路径需改脚本顶部的常量。

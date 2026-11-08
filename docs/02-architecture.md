@@ -93,10 +93,16 @@ store.js / db.js
 │   └── ab/cd/abcd…ef.gif        ← 按 md5 前四位分桶，避免单目录爆炸
 ├── index.db                     ← 派生索引（可重建）
 ├── characters.json              ← 人工数据（不可重建，必须备份）
+├── judge-cache.json             ← 「是不是表情包」的模型判定缓存（按 md5，可删）
 ├── backups/
 │   └── index-20261107-1300.db
-└── config.json                  ← 运行时设置（可选）
+├── exports/                     ← 整库导出 zip（POST op=export）
+└── trash/                       ← /meme rm 的软删除（可恢复）
 ```
+
+**角色表种子**：仓库根目录的 `characters.seed.json`（38 条）在**首次启动**时写进
+`characters.json`——只在数据目录没有这个文件时种一次，已有（哪怕坏了）一律不动。
+没有这一幕，新装的人拿到空表，模型会把所有表情都标成「未知」。
 
 **软删除**：`library/trash/<md5>.<ext>`，记录标记 `retired`。
 

@@ -1,6 +1,17 @@
 # 依赖
 node_modules/
-package-lock.json
+
+# 本地数据
+# 正常情况下库在 %USERPROFILE%\.dsh\meme-brain，不在仓库里。
+# 但 DSH_MEME_BRAIN_ROOT 指到仓库根时会把数据写进来——这几种情况不欢迎进 git。
+/characters.json
+/index.db
+/index.db-*
+/library/
+/exports/
+/backups/
+/trash/
+/judge-cache.json
 
 # 临时文件
 tmp-*

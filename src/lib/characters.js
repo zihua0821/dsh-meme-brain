@@ -7,10 +7,17 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { ROOT } from './store.js'
 
 export const CHARACTERS_FILE = join(ROOT, 'characters.json')
+
+/**
+ * 随包发布的角色表种子（仓库根目录，38 条）。
+ * 只在数据目录里**还没有**角色表时种一次——已有的一律不动，坏掉也不动。
+ */
+export const SEED_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'characters.seed.json')
 
 const EMPTY = { version: 1, items: {} }
 
@@ -43,6 +50,31 @@ export function save(db) {
   const tmp = `${CHARACTERS_FILE}.tmp`
   writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8')
   renameSync(tmp, CHARACTERS_FILE)
+}
+
+/**
+ * 首次启动：数据目录没有角色表时，用随包带的种子初始化。
+ *
+ * 为什么只在「文件不存在」时种：
+ *   - 角色表是人工数据，坏掉的、被改过的都可能是**人想要的**，不能拿种子盖掉；
+ *   - 已经跑过一阵的库不需要种子（里面的角色是分析 + 人工标注攒出来的）。
+ *
+ * @returns {{seeded:boolean, count:number, error?:string}}
+ */
+export function seedIfMissing() {
+  if (existsSync(CHARACTERS_FILE)) return { seeded: false, count: list().length }
+  if (!existsSync(SEED_FILE)) return { seeded: false, count: 0, error: `种子文件不存在：${SEED_FILE}` }
+  try {
+    const text = readFileSync(SEED_FILE, 'utf8').replace(/^\uFEFF/, '')
+    const raw = JSON.parse(text)
+    if (!raw || typeof raw !== 'object' || !raw.items || typeof raw.items !== 'object') {
+      throw new Error('种子格式不对（需要 {version, items}）')
+    }
+    save({ version: Number(raw.version) || 1, items: raw.items })
+    return { seeded: true, count: Object.keys(raw.items).length }
+  } catch (error) {
+    return { seeded: false, count: 0, error: error.message }
+  }
 }
 
 /** 列表（按名字排序） */
