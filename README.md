@@ -248,5 +248,5 @@ CI 在 `ubuntu-latest` / `windows-latest` × Node 22 / 24 上跑 `npm ci && npm 
 
 ## License
 
-[MIT](LICENSE)。`test/fixtures/` 下的测试图片是表情包文化样本，版权归各自作者，
-仅用于测试，不在 MIT 覆盖范围内。
+代码和文档以 [MIT](LICENSE) 发布。`test/fixtures/` 里的测试图片是表情包文化样本，
+版权归各自作者，不在 MIT 覆盖范围内——详见 [NOTICE.md](NOTICE.md)。

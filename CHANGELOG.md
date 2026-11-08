@@ -8,7 +8,8 @@
 
 仓库第一次以开源形式发布。**功能没变**，变的是「别人能不能装上、能不能看懂、能不能信」：
 
-- **许可证**：新增 `LICENSE`（MIT）；`test/fixtures/` 里的图片是表情包样本，单独注明不在许可范围内。
+- **许可证**：新增 `LICENSE`（MIT，标准文本，方便 GitHub 识别）；`test/fixtures/` 里的图片是表情包样本，
+  用 `NOTICE.md` 单独声明不在 MIT 覆盖范围内。
 - **能装上**：提交 `package-lock.json`（`npm ci` 可复现）；`files` 补齐角色表种子和 `integrations/`；
   补 `repository` / `homepage` / `bugs` / `keywords`。
 - **开箱可用**：`characters.json` 改名 `characters.seed.json`，**首次启动自动种入 38 条角色表**
