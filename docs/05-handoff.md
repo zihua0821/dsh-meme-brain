@@ -83,22 +83,20 @@ npm pack      39 个文件：src / scripts / integrations / 种子；不含 test
 Aurabot 模块  按新 README 部署成功，20:06:07 日志「表情脑已就绪」
 ```
 
-**还差三件只能人做的事**：
+**发布结果（2026-11-08 20:12）**：
 
-1. **替换占位符** `YOUR-GITHUB-USER`：
-   `dsh-meme-brain` = `package.json` 3 处 + `README.md` 3 处（徽章 2、clone 1）；
-   `dsh-peak-rhythm` = `package.json` 3 处 + `README.md` 4 处（徽章 2、clone 1、相关项目 1）。
-   在各自的仓库根目录跑：
-   ```powershell
-   node -e "const fs=require('fs');const u='你的GitHub用户名';for(const f of ['package.json','README.md'])fs.writeFileSync(f,fs.readFileSync(f,'utf8').replaceAll('YOUR-GITHUB-USER',u))"
-   ```
-2. **建仓库并 push**（GitHub 上先建两个空仓库，不要初始化 README）：
-   ```powershell
-   git remote add origin https://github.com/<用户名>/dsh-meme-brain.git
-   git push -u origin master
-   ```
-3. **提交身份**（可选）：本机仓库是 `zy <zy@local>`，GitHub 不会把这些提交关联到你的账号。
-   想关联就改 `git config user.email`（用 GitHub 的 noreply 地址），历史要不要重写另说。
+| 仓库 | 地址 | 首发提交 | CI |
+|---|---|---|---|
+| dsh-meme-brain | <https://github.com/zihua0821/dsh-meme-brain> | `9e4f2ec` | ✅ 4/4（ubuntu + windows × Node 22/24） |
+| dsh-peak-rhythm | <https://github.com/zihua0821/dsh-peak-rhythm> | `14fc516` | ✅ 4/4 |
+
+- 两个仓库默认分支都是 `master`，`origin` 指向 GitHub，本地与远端一致。
+- 提交身份：peak 的 4 个提交已统一成
+  `zihua0821 <84671913+zihua0821@users.noreply.github.com>`（强推过，改了 hash）；
+  meme-brain 的历史还是 `zy <zy@local>` / `dsh-agent <agent@local>`——不含个人信息，但没关联到账号。
+  想统一，就照 peak 那次的做法再改一遍（`filter-branch --env-filter` + `push --force`）。
+- 仓库描述和 topics 还没填（GitHub 上手动填更快）：meme-brain 可以写
+  「DSH 表情包管理系统：收图/判重/模型标注/检索/界面/QQ」，topics 用 `dsh` `sticker` `meme` `sqlite` `sharp`。
 
 > 没有截图。想加就先放进 `docs/`，再在 README 顶部插一行图片。
 
