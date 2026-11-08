@@ -167,7 +167,13 @@ export function search(index, opts = {}) {
     return { row, score, fields, dist, relevance }
   })
 
-  scored.sort((a, b) => b.relevance - a.relevance)
+  // 排序必须确定：同分时先按入库时间新→旧，再按 md5。
+  // 只按 relevance 排会在「同分」时落到 SQL 的并列顺序上——SQLite 对 ORDER BY 并列
+  // 不保证顺序，Windows 和 Linux 可能不一样（同一句查询两个结果，检索层不能这样）。
+  scored.sort((a, b) =>
+    b.relevance - a.relevance
+    || (Number(b.row.created_at) || 0) - (Number(a.row.created_at) || 0)
+    || String(a.row.md5).localeCompare(String(b.row.md5)))
   const picked = scored.slice(0, limit)
 
   return {

@@ -98,6 +98,9 @@ const now = () => Date.now()
 /** 插入一条记录（已存在则忽略，返回 false） */
 export function insertItem(db, item) {
   const t = now()
+  // createdAt 允许调用方指定（重建、迁移时要保留原始入库时间）；
+  // 不传就用现在。以前这里写死 t，调用方传了也被静默吞掉——顺序就变成随机的了。
+  const created = Number(item.createdAt) || t
   const res = db.prepare(`
     INSERT INTO items (md5, path, ext, bytes, width, height, frames, has_alpha, dhash,
                        name, tags, state, text, character, char_conf, score, scene,
@@ -112,7 +115,7 @@ export function insertItem(db, item) {
     item.text ?? null, item.character ?? null, item.charConf ?? null,
     item.score ?? null, item.scene ?? null,
     item.analyzedAt ?? null, item.model ?? null, item.source ?? null,
-    item.dupOf ?? null, item.dupDistance ?? null, item.pinned ? 1 : 0, t, t,
+    item.dupOf ?? null, item.dupDistance ?? null, item.pinned ? 1 : 0, created, t,
     item.target ?? null, item.appearance ?? null,
   )
   return Number(res.changes) > 0

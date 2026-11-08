@@ -56,7 +56,7 @@ const happyFish = seed({
 })
 const otherChar = seed({
   name: '熊猫头说无所谓', character: '龙图', text: '无所谓 反正我不要脸',
-  score: JSON.stringify({ valence: 0.1, arousal: 0.5, aggression: 0.6, intimacy: 0.1, absurdity: 0.8 }),
+  score: JSON.stringify({ valence: 0.1, arousal: 0.5, aggression: 0.6, intimacy: 0.1, absurdity: 0.6 }),
 })
 const weird = seed({
   name: '纯抽象图', character: '', appearance: '彩色噪点',
@@ -113,6 +113,18 @@ test('纯情绪也能查：抽象拉满的那张应该第一', () => {
   const r = searchLib.search(index, { emotion: '抽象', limit: 3 })
   assert.equal(r.items[0].md5, weird)
   assert.equal(r.used.emotion, '抽象')
+})
+
+test('同分同时间：顺序按 md5 兜底，不靠 SQL 的并列顺序', () => {
+  // 这两张分数一样、入库时间也一样。以前 insertItem 会把 createdAt 吞掉，
+  // 三张图全落到同一毫秒 → 排序落到 SQLite 对并列的任意顺序上，
+  // Windows 绿、Linux 红（2026-11-08 CI 就红在这）。
+  const tieA = seed({ name: '同分甲', score: JSON.stringify({ absurdity: 1.0 }), createdAt: 1000 })
+  const tieB = seed({ name: '同分乙', score: JSON.stringify({ absurdity: 1.0 }), createdAt: 1000 })
+
+  const r = searchLib.search(index, { emotion: '抽象', limit: 20 })
+  const order = r.items.map((i) => i.md5)
+  assert.deepEqual(order.slice(0, 3), [weird, tieA, tieB], '同分按新到旧；同时间按 md5 升序')
 })
 
 test('搜不到就返回空，不凑数', () => {

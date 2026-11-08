@@ -388,6 +388,7 @@ peak-rhythm   （独立仓库）Aurabot 模块，id = peak-rhythm
 | **hook 不能写在提前 return 之后** | 我在 `Detail` 里把 `useState` 放在「载入中」的 return 后面 → 首屏少调两个 hook，数据到了再调 → React 报错、**整个面板白屏**。已加源码级测试扫描这种写法 |
 | **GET/POST 别放错分支** | `op=export` 写进了 POST 分支，客户端用 GET 调 → 「未知 op」。现在：`op=exports` 是 GET，`op=export` / `op=import` 是 POST |
 | **判重日志可能显示「未命名」** | 模块本地快照有 60 秒缓存，刚入库那张还没进快照，日志里「撞上哪一张」会显示未命名。等一会儿再发就正常，**不是数据错** |
+| **排序不能只按分数** | 同分时 SQLite 不保证 `ORDER BY` 并列的顺序，Windows 和 Linux 可能不一样（2026-11-08 CI 在 ubuntu 上红了一次）。排序要有兜底：分数 → 入库时间 → md5。另外 `insertItem` 以前把 `created_at` 写死成 `now()`，调用方传的 `createdAt` 被静默吞掉 |
 
 ---
 

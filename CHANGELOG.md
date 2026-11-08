@@ -19,6 +19,10 @@
 - **CI**：新增 `.github/workflows/ci.yml`，ubuntu + windows × Node 22/24 跑 `npm ci && npm test`。
 - **去个人信息**：文档里的本机绝对路径改成 `%USERPROFILE%` / `<克隆目录>`。
 - **文档**：新增 `CONTRIBUTING.md`；README 重写成开源门面；验收手册里的过期状态标记修正。
+- **修：检索顺序不确定**。CI 在 ubuntu 上红了：同分图的顺序取决于 SQLite 对 `ORDER BY` 并列的
+  任意顺序，Windows 绿、Linux 红。根因还有一条——`insertItem` 把 `created_at` 写死成 `now()`，
+  调用方传的 `createdAt` 被静默吞掉。现在 `insertItem` 尊重传入值，检索排序加了「时间新→旧 → md5」
+  两级兜底，并补了一条确定性测试。
 
 ---
 
