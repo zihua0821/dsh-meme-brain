@@ -1,4 +1,4 @@
-# 上下文交接（2026-11-07 起稿，19:30 复核）
+# 上下文交接（2026-11-07 起稿，2026-11-08 复核）
 
 > 用途：上下文压缩/换会话后，读这一份就能继续干。
 > 权威顺序：`docs/` 里的设计文档 > 本文 > 代码注释。
@@ -13,14 +13,49 @@ node scripts/verify.mjs              → 文件数 = 记录数 / 孤儿 0 / 缺�
 GET :<port>/meme-brain/api?op=facets → 角色分布 + 各待办计数（数字每天都在长，别背数字）
 GET :<port>/meme-brain/api?op=chars  → 角色表全量（当前 38 条）
 AI 工具                              → meme_find / meme_status 出现在 agent 工具表里
-Aurabot                              → 模块「表情脑」在跑；「表情包」（内置）已停
-                                            另有独立仓库的「峰谷节奏」模块在跑
-git status                           → clean（当前 HEAD 见 git log）
+Aurabot                              → 「表情脑」(meme-qq) 在跑、内置 stickers 已停；
+                                        「峰谷节奏」(peak-rhythm) 在跑（独立仓库）
+git status                           → 两个仓库都 clean
 ```
 
-**别背总数**：QQ 会自动收图，张数每天都在长（写这份时 297 张 / 170MB / 297 已分析 /
-296 有外观 / 230 有角色 / 93 人工锁定 / 297 有标签 / 角色表 38 条 / schema v3）。
+**别背总数**：QQ 会自动收图，张数每天都在长。
+2026-11-08 19:50 的快照：**324 张 / 173MB / 324 已分析 / 323 有外观 / 243 有角色
+（94 张人工锁定）/ 81 未知角色 / 324 有标签 / 49 张 source=qq / 角色表 38 条 / schema v3**。
 要看当前值：`/meme doctor` 或界面右上角。
+
+**端口会变**：DSH 每次重启，GUI 端口可能不同（本次 4795）。别把端口写死，
+用 `ctx.webServer.getOrigin()`，或者运行时上下文里那个 URL。
+
+---
+
+## 0.5 上一次会话干了什么（压缩后最可能丢的部分）
+
+按时间顺序，都已完成、都有测试：
+
+1. **M9-d 全字段可编辑**：详情里外观/文字/场景/指向/**五个评分滑块**都能改；保存是**差异提交**
+   （只发真改过的字段，否则一保存就全锁）；改模型字段自动 `pinned=1`。
+2. **M9-e 角色表查看 + 刷新**：弹层分「库里用到的/还没用到的」；「刷新」重拉列表/计数/角色表/详情且不动筛选。
+3. **M9-f 角色表可编辑**：改/改名/新增/删除；**改名连带动库里引用它的图**并锁定；在用中的角色删除要确认两次。
+4. **M9-g 对话里改库**：QQ 里「这张是 doro」→ `qq_set_character`；定位 md5 > 名字 > 刚发的那张；
+   **权限硬校验**（只有 `ownerQQ` 能改，参数 `charEditMode`）。
+5. **M9-h 导入导出**：自写 zip（无依赖，STORE，170MB 约 0.2 秒）；导出含图 + manifest + 角色表；
+   导入**只补不覆盖**，md5 不符拒收。`exports/` 已有一份备份。
+6. **标签体系**：闭集 18 词，分析产出，只在空标签时补；**全库 324/324 都有标签**。
+   锁定的条目用 `tagsOnly` 模式补（不动角色/名字/分数）。
+7. **角色表 6 → 38**：新增吉伊卡哇三人组（吉伊/小八/乌萨奇，互相写排除条件）、柯基、奶龙、
+   汤姆猫、老鼠、鼠鼠，以及兜底类别「默认的动物」「呆猫」。多轮收紧 `look` 去掉了「磁吸」误判。
+8. **峰谷节奏拆成独立仓库** `F:\dsh-peak-rhythm`（含法定节假日、和 dsh-meter 对表），
+   本仓库只留 ADR-0021 一条记录。
+9. **文档收尾**：README 重写、新增 CHANGELOG、02/04/05 同步到当前状态。
+
+**踩到的两个坑（都修了）**：
+- 我把 `useState` 写在「载入中」的提前 return 之后 → 整个面板白屏。已修，并加了一条**源码级测试**
+  扫描「hook 出现在提前 return 之后」。
+- `op=export` 我写进了 POST 分支却用 GET 调 → 未知 op。现在：`op=exports` 是 GET，
+  `op=export` / `op=import` 是 POST。
+
+**已知小瑕疵（不影响数据）**：判重日志里「撞上哪一张」偶尔显示「未命名」——
+模块本地快照有 60 秒缓存，刚入库的那张还没进快照。等一会儿再发就正常。
 
 ---
 
@@ -194,9 +229,9 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 | 项目目录 | `F:\dsh-meme-brain`（当前工作目录） |
 | 插件安装方式 | profile 里是 **link**：`dsh-meme-brain → F:\dsh-meme-brain` |
 | profile | `%USERPROFILE%\.dsh\profiles\desktop` |
-| 数据目录 | `%USERPROFILE%\.dsh\meme-brain\`（library/ + index.db + characters.json + backups/） |
+| 数据目录 | `%USERPROFILE%\.dsh\meme-brain\`（library/ + index.db + characters.json + judge-cache.json + exports/ + backups/ + trash/） |
 | **Aurabot 模块** | `%USERPROFILE%\.dsh\plugins-data\aurabot\modules\meme-qq\index.mjs`（名字「表情脑」）。仓库源码在 `integrations/aurabot/meme-qq/`，改完跑 `node scripts/deploy-aurabot.mjs`（Aurabot 3 秒热加载） |
-| GUI 端口 | 每次重启会变（当前见运行时 context / `ctx.webServer.getOrigin()`） |
+| GUI 端口 | 每次重启会变（2026-11-08 是 4795）。用运行时 context 或 `ctx.webServer.getOrigin()`，别写死 |
 | dsh CLI | `F:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd` |
 | **PowerShell** | **工具里的 `pwsh` 已是 PowerShell 7.6.9**（由 profile 补丁把 `pwsh-sandbox.pwshPath` 指到 `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`）。改之前默认是 5.1，读/写中文都会坏。**别再按 5.1 的行为写脚本**：`Get-Content`/`Set-Content` 默认 UTF-8，`Invoke-WebRequest` 发中文正常 |
 | 依赖 | 只有 `sharp`（原生，libvips 8.18.7） |
@@ -247,17 +282,18 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 
 ---
 
-## 5. 数据现状（2026-11-07 22:45 快照）
+## 5. 数据现状（2026-11-08 19:50 快照）
 
 | 项 | 值 |
 |---|---|
-| 新库 | **297 张**，170MB，`library/<md5[0:2]>/<md5[2:4]>/<md5>.<ext>` |
-| 已分析 | 297（全部） |
-| 有角色 | **230（77%）**，其中 **93 张是人工标注**（`char_conf=人工`，已锁定） |
-| 未知角色 | 67（用户已决定：剩下的不再标） |
-| 无标签 | **0**（297 张全有标签，闭集 18 词） |
+| 新库 | **324 张**，173MB，`library/<md5[0:2]>/<md5[2:4]>/<md5>.<ext>` |
+| 已分析 | 324（全部，QQ 新收的会自动起名+打标） |
+| 有角色 | **243（75%）**，其中 **94 张是人工标注**（`char_conf=人工`，已锁定） |
+| 未知角色 | 81（用户已决定：剩下的不再标） |
+| 无标签 | **0**（324 张全有标签，闭集 18 词） |
 | 角色表 | **38 条**（含吉伊卡哇三人组、兜底类别「默认的动物」「呆猫」） |
 | 角色分布（前几名） | 默认的动物 75 / 大肥鱼 33 / 龙图 29 / 简笔小人 24 / doro 12 / 吉伊 10 / 耄耋 9 |
+| QQ 来源 | **49 张** `source=qq`（自动收的，每天在涨） |
 | **Aurabot 旧库** | 已删除（2026-11-07 21:0x，294 文件 / 169MB） |
 | 回收站 | `trash/` 里有 2 张误收的游戏截图（`/meme rm` 删的，可恢复） |
 
@@ -267,17 +303,21 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 
 | 文件 | 内容 |
 |---|---|
-| `README.md` | 项目总览、决策摘要、里程碑 |
-| `docs/00-decisions.md` | ADR-0001 ~ 0019（全部已定） |
+| `README.md` | **门面**：能力、快速开始、命令、文档索引、已知边界 |
+| `docs/00-decisions.md` | **ADR-0001 ~ 0021**（全部已定） |
 | `docs/01-requirements.md` | 需求：流水线、状态机、功能需求、验收 |
 | `docs/02-architecture.md` | 架构：模块、契约、数据模型、算法 |
 | `docs/03-engineering-contract.md` | **工程契约**：五条保证、设计规则、改动五步验证 |
-| `docs/04-acceptance.md` | **验收手册**：每个里程碑「做什么/怎么验/变化/怎么退」 |
+| `docs/04-acceptance.md` | **验收手册**：每个里程碑「做什么/怎么验/变化/怎么退」（数字是当时快照） |
+| `CHANGELOG.md` | 按里程碑的变更记录（M0–M9 + 独立仓库说明） |
 | `integrations/aurabot/meme-qq/` | Aurabot 模块源码（部署用 `node scripts/deploy-aurabot.mjs`） |
 
-代码：`src/index.js`（Host 入口）、`src/commands.js`（命令分发）、`src/client.js`（界面）、
-`src/lib/{parse,dhash,dedupe,store,db,pipeline,query,analyze,characters,http,doctor}.js`、
-`scripts/{scan-library,verify,cluster-appearance}.mjs`、`test/{unit,regression,integration}`。
+代码：`src/index.js`（Host 入口）、`src/commands.js`（命令分发）、`client.js`（界面，只调 HTTP）、
+`src/lib/{parse,dhash,dedupe,store,db,pipeline,query,analyze,characters,charEdit,annotate,search,judge,archive,backup,http,doctor,tools}.js`、
+`scripts/{deploy-aurabot,import-characters,bulk-analyze,reanalyze,verify,scan-library,cluster-appearance}.mjs`、
+`test/{unit,integration,regression}`。
+
+**另一个仓库**：`F:\dsh-peak-rhythm`（峰谷节奏，Aurabot 模块，含节假日表和对 `dsh-meter` 的对表测试）。
 
 ---
 
@@ -302,15 +342,18 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 | **~~5.1 发中文会变问号~~** | 同样已从根上解决（pwsh 工具改跑 PS7）。历史：`Invoke-WebRequest -Body $中文`（PS 5.1）按 Latin-1 编码 → 服务端收到一串 `?`，实测把一条的外观写成问号（用 node 修回）。现在 PS7 下中文往返正常，已实测 |
 | **面板页签是写死的** | `TAB_MODS = { stickers: ['stickers'] }`：只有内置 stickers 模块在跑，「表达 → 表情包」页才存在；自定义模块页只能落「平台/系统」两组 |
 | **存图和回复要分开** | 早期版本让「存图」触发 `saveSignal`，删掉她这轮文字强塞表情。用户指出这是错的：存表情和回应是**两条并行互不干扰的路**，硬设「回」或「不回」都不对 |
+| **hook 不能写在提前 return 之后** | 我在 `Detail` 里把 `useState` 放在「载入中」的 return 后面 → 首屏少调两个 hook，数据到了再调 → React 报错、**整个面板白屏**。已加源码级测试扫描这种写法 |
+| **GET/POST 别放错分支** | `op=export` 写进了 POST 分支，客户端用 GET 调 → 「未知 op」。现在：`op=exports` 是 GET，`op=export` / `op=import` 是 POST |
+| **判重日志可能显示「未命名」** | 模块本地快照有 60 秒缓存，刚入库那张还没进快照，日志里「撞上哪一张」会显示未命名。等一会儿再发就正常，**不是数据错** |
 
 ---
 
 ## 8. 已知问题
 
 1. **吉伊卡哇里有个「介于吉伊和乌萨奇之间」的角色**：白色/粉色、有长耳，既不像吉伊（小圆耳 + ω 嘴）也不像乌萨奇（鹅黄长耳）。**人和模型都不认识**，用户已决定：这类保持「未知」，**不要为了填满而硬套成吉伊或乌萨奇**。库里几张被手工标过的（`a6877fbe`、`230e3d52`、`a3d18227`）就留着，不再动
-2. 剩下 61 张未知角色用户已决定**不再标注**（多是真实照片猫狗、普通卡通小兽、真人表情，本来就不属于任何有名角色）
+2. 剩下约 81 张未知角色用户已决定**不再标注**（多是真实照片猫狗、普通卡通小兽、真人表情，本来就不属于任何有名角色）
 3. `大肥鱼飞起`、`惬意doro` 曾认错，收紧 look 后已修正
-4. **73 张无标签**：分析不产出 tags 字段，要补得单独做一次（或把 tags 加进分析提示词）
+4. ~~73 张无标签~~ → 已补齐（闭集 18 词，`tagsOnly` 模式补锁定条目）；新收的图自动带标签
 5. **6 张已分析但没外观**（加 appearance 列之前分析的），重跑一次 `--force` 就齐
 6. 界面还没有删除按钮（命令有 `/meme rm`）、筛选条不含「疑似重复」
 
@@ -318,16 +361,16 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 
 ## 9. 下一步
 
-**当前状态**：M0–M5、M7、M8 完成；M6 角色与检索基本完成（38 条角色表、人工标注 86 张）；M9 界面部分完成（详情/筛选/标注/角色表编辑/全字段可编辑/**导入导出**都已完成）。**205 项测试全绿**。
+**当前状态**：M0–M5、M7、M8、**M9（全部）** 完成；M6 基本完成（38 条角色表、94 张人工标注、标签全覆盖）。**205 项测试全绿**，两个仓库都干净。
 
 **候选（按我判断的价值）**：
 
-1. **相似传播（2a）**：改一张 → 应用到相似的几张（人工确认后批量），给以后新增的图用
+1. **相似传播**：改一张 → 预览「找到 N 张相似」→ 确认后批量改（M6 的 L3 归纳），给以后新增的图用
 2. **删除入口上界面**：命令有 `/meme rm`，界面还没有按钮
-3. **定时自动导出**：现在要手动点；可以每周自动打一份（`exports/` 会越攒越多，要加保留策略）
-4. 小尾巴：6 张无外观、界面「疑似重复」筛
+3. **定时自动导出**：现在手动点；要加保留策略（`exports/` 每份 170MB，会越攒越多）
+4. 小尾巴：界面「疑似重复」筛选、6 张无外观（`/meme analyze --force` 可补）
 
-**已完结**：旧库已删（169MB 回收）；角色表从 6 条扩到 38 条并做了多轮去噪；标签已补齐（全库）；备份可导出可还原（170MB / 0.2 秒）
+**已完结（不用再提）**：旧库已删（169MB）；角色表 6→38 并多轮去噪；标签全库补齐；导入导出可用（170MB / 0.2 秒）；峰谷节奏拆成独立仓库。
 
 ---
 
@@ -337,13 +380,16 @@ F:\dsh-peak-rhythm        Aurabot 模块，id = peak-rhythm
 2. **先讨论后开工**：架构、定位、取舍类问题先出方案再动手
 3. **改代码后自查**：`node --test "test/**/*.test.js"` 全绿 + `node --check` + 需要时跑 `scripts/verify.mjs`
 4. 用户是 UE 开发者，不读前端/JS 代码——**结论要能用命令复现，不能只说"测试通过"**
+5. **数据改动要说明后果**：删/改/迁移前讲清影响面和怎么退
+6. **不要为填满而硬套**：模型认不出就写「未知」，比认错强
 
 ---
 
 ## 11. 新会话怎么开始
 
 1. `cd F:\dsh-meme-brain`
-2. 读 `docs/04-acceptance.md`（知道每个里程碑怎么验）和本文
-3. 跑 `/meme doctor` 看系统是否健康
-4. 跑 `node --test "test/**/*.test.js"` 确认代码没坏
-5. 继续 M6（`bulk`）或 M9（导入导出），或先处理第 8 节的已知问题
+2. 读本文（尤其 §0 快照和 §0.5「上次做了什么」），要细节再翻 `docs/04-acceptance.md`
+3. 跑 `/meme doctor` + `node --test "test/**/*.test.js"` 确认没坏
+4. 看 §9 挑一件做，或按用户当次要求来
+5. 动 QQ 模块：改 `integrations/aurabot/meme-qq/` 后跑 `node scripts/deploy-aurabot.mjs`；
+   峰谷模块在 `F:\dsh-peak-rhythm`，改完跑它自己的 `node scripts/deploy.mjs`
