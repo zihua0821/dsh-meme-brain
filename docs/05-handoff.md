@@ -63,6 +63,47 @@ git status                           → 两个仓库都 clean
 
 ---
 
+## 0.6 开源发布准备（2026-11-08 晚，已完成）
+
+两个仓库都整理成可以公开的样子了（`dsh-meme-brain` 提交 `603af90`，`dsh-peak-rhythm` 提交 `8b6061b`）。
+**功能没改**，改的是「别人能不能装上、看懂、相信」：
+
+- 许可证（MIT）、CI（ubuntu + windows × Node 22/24）、提交 `package-lock.json`、补 `repository` 等元数据
+- **角色表种子**：`characters.json` → `characters.seed.json`，`apply()` 里首次启动种入 38 条
+  （已有不动、坏的不覆盖）；新增 2 个测试文件共 7 项
+- `integrations/aurabot/README.md`：模块的安装、14 项参数、8 个工具、权限、怎么退回内置
+- README 重写成开源门面；新增 `CONTRIBUTING.md`；文档去个人路径；验收手册过期标记修正
+
+**验证过的事实**（不是「测试通过」四个字）：
+
+```
+212 项测试    Windows Node 24 ✅　WSL Ubuntu Node 22.22 ✅（两条都实跑）
+npm ci        在干净的 Linux 目录能装出来（CI 的安装步骤不是猜的）
+npm pack      39 个文件：src / scripts / integrations / 种子；不含 test/
+Aurabot 模块  按新 README 部署成功，20:06:07 日志「表情脑已就绪」
+```
+
+**还差三件只能人做的事**：
+
+1. **替换占位符** `YOUR-GITHUB-USER`：
+   `dsh-meme-brain` = `package.json` 3 处 + `README.md` 3 处（徽章 2、clone 1）；
+   `dsh-peak-rhythm` = `package.json` 3 处 + `README.md` 4 处（徽章 2、clone 1、相关项目 1）。
+   在各自的仓库根目录跑：
+   ```powershell
+   node -e "const fs=require('fs');const u='你的GitHub用户名';for(const f of ['package.json','README.md'])fs.writeFileSync(f,fs.readFileSync(f,'utf8').replaceAll('YOUR-GITHUB-USER',u))"
+   ```
+2. **建仓库并 push**（GitHub 上先建两个空仓库，不要初始化 README）：
+   ```powershell
+   git remote add origin https://github.com/<用户名>/dsh-meme-brain.git
+   git push -u origin master
+   ```
+3. **提交身份**（可选）：本机仓库是 `zy <zy@local>`，GitHub 不会把这些提交关联到你的账号。
+   想关联就改 `git config user.email`（用 GitHub 的 noreply 地址），历史要不要重写另说。
+
+> 没有截图。想加就先放进 `docs/`，再在 README 顶部插一行图片。
+
+---
+
 ## 1. 一句话现状
 
 **从收图到 QQ 全链路都通了，可以日常用了**：解析/判重/分析/检索/界面/备份（M0–M5、M9 全部），
